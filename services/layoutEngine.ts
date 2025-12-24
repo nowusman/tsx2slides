@@ -9,9 +9,10 @@ import React from 'react';
 import * as ReactDOM from 'react-dom/client';
 import * as ts from 'typescript';
 import { DocumentLayout, ExportFormat, LayoutElement, PageLayout } from '../types';
-import { walkDom, splitIntoPages, validateElements, LayoutItem, ShapeElement } from './domWalker';
+import { walkDom, validateElements, LayoutItem, ShapeElement } from './domWalker';
 import { TextElement } from './textExtractor';
 import { ExtractedImage } from './imageExtractor';
+import { paginateLayoutItems } from './pageBreaker';
 
 const CONTAINER_WIDTH = 1280;
 const CONTAINER_HEIGHT = 720;
@@ -20,16 +21,31 @@ export interface ParseRequest {
   content: string;
   format: ExportFormat;
   sourceName?: string | null;
+  forceSinglePage?: boolean;
+  maxPages?: number;
 }
 
 /**
  * Main entry point: parses TSX content and returns a document layout
  */
-export const parseTsxToLayout = async ({ content, format, sourceName }: ParseRequest): Promise<DocumentLayout> => {
+export const parseTsxToLayout = async ({ content, format, sourceName, forceSinglePage, maxPages }: ParseRequest): Promise<DocumentLayout> => {
   const container = document.getElementById('analysis-container');
   if (!container) {
     throw new Error('Hidden analysis container missing from DOM.');
   }
+
+  // Normalize the hidden stage so measurements are consistent even if external CSS fails to load
+  Object.assign(container.style, {
+    position: 'absolute',
+    left: '-9999px',
+    top: '-9999px',
+    width: `${CONTAINER_WIDTH}px`,
+    height: `${CONTAINER_HEIGHT}px`,
+    overflow: 'auto',
+    visibility: 'hidden',
+    pointerEvents: 'none',
+    background: '#ffffff',
+  });
 
   // Transpile TSX to JavaScript
   const transpiled = transpileTsx(content, sourceName);
@@ -68,7 +84,12 @@ export const parseTsxToLayout = async ({ content, format, sourceName }: ParseReq
       // Give layout time to settle for fonts/images
       setTimeout(async () => {
         try {
-          const layout = await extractLayoutEnhanced(container, format, sourceName || 'TSX Capture');
+          const layout = await extractLayoutEnhanced(
+            container,
+            format,
+            sourceName || 'TSX Capture',
+            { forceSinglePage, maxPages }
+          );
           root.unmount();
           resolve(layout);
         } catch (err) {
@@ -86,7 +107,8 @@ export const parseTsxToLayout = async ({ content, format, sourceName }: ParseReq
 const extractLayoutEnhanced = async (
   container: HTMLElement,
   _format: ExportFormat,
-  title: string
+  title: string,
+  options: { forceSinglePage?: boolean; maxPages?: number }
 ): Promise<DocumentLayout> => {
   // Use enhanced DOM walker
   const result = await walkDom(container);
@@ -94,14 +116,20 @@ const extractLayoutEnhanced = async (
   // Validate and clean elements
   const validElements = validateElements(result.elements);
 
-  // Split into pages
-  const pageElements = splitIntoPages(validElements, result.containerInfo.height);
+  // Split into pages with smarter page breaking
+  const pageBreaks = paginateLayoutItems(validElements, {
+    pageHeight: result.containerInfo.height,
+    maxPages: options.maxPages,
+    forceSinglePage: options.forceSinglePage,
+    contentHeight: result.contentHeight,
+    marginPx: 12,
+  });
 
   // Convert to legacy format for compatibility
-  const pages: PageLayout[] = pageElements.map((elements, index) => ({
+  const pages: PageLayout[] = pageBreaks.map((breakInfo, index) => ({
     pageNumber: index + 1,
     bgColor: '#ffffff',
-    elements: elements.map(el => convertToLegacyFormat(el)),
+    elements: breakInfo.elements.map(el => convertToLegacyFormat(el)),
   }));
 
   // Ensure at least one page
@@ -134,56 +162,59 @@ const extractLayoutEnhanced = async (
  * Converts new LayoutItem to legacy LayoutElement format
  */
 const convertToLegacyFormat = (item: LayoutItem): LayoutElement => {
-  if (item.type === 'text') {
-    const textItem = item as TextElement;
+    if (item.type === 'text') {
+        const textItem = item as TextElement;
+        return {
+            id: textItem.id,
+            type: 'text',
+            text: textItem.text,
+            x: textItem.position.xPercent,
+            y: textItem.position.yPercent,
+            w: textItem.position.wPercent,
+            h: textItem.position.hPercent,
+            color: textItem.color,
+            fontSize: textItem.fontSize,
+            fontWeight: textItem.fontWeight,
+            fontFamily: textItem.fontFamily,
+            align: textItem.align,
+            lineHeight: textItem.lineHeight,
+        };
+    }
+
+    if (item.type === 'image') {
+        const imgItem = item as ExtractedImage;
+        return {
+            id: imgItem.id,
+            type: 'image',
+            x: imgItem.position.xPercent,
+            y: imgItem.position.yPercent,
+            w: imgItem.position.wPercent,
+            h: imgItem.position.hPercent,
+            imageData: imgItem.src,
+            imageFormat: imgItem.format,
+            color: '#000000',
+            bgColor: '#ffffff',
+            strokeWidthPx: 0,
+        } as LayoutElement & { imageData?: string; imageFormat?: string };
+    }
+
+    // Shape (rect or circle)
+    const shapeItem = item as ShapeElement;
     return {
-      id: textItem.id,
-      type: 'text',
-      text: textItem.text,
-      x: textItem.position.xPercent,
-      y: textItem.position.yPercent,
-      w: textItem.position.wPercent,
-      h: textItem.position.hPercent,
-      color: textItem.color,
-      fontSize: textItem.fontSize,
-      fontWeight: textItem.fontWeight,
-      fontFamily: textItem.fontFamily,
-      align: textItem.align,
-      lineHeight: textItem.lineHeight,
+        id: shapeItem.id,
+        type: shapeItem.type,
+        x: shapeItem.position.xPercent,
+        y: shapeItem.position.yPercent,
+        w: shapeItem.position.wPercent,
+        h: shapeItem.position.hPercent,
+        color: shapeItem.strokeColor || shapeItem.bgColor || '#000000',
+        bgColor: shapeItem.bgColor,
+        opacity: shapeItem.opacity,
+        radius: shapeItem.radius,
+        strokeWidthPx: shapeItem.strokeWidth,
+        borderStyle: shapeItem.borderStyle,
+        shadow: shapeItem.shadow ?? undefined,
     };
-  }
-
-  if (item.type === 'image') {
-    const imgItem = item as ExtractedImage;
-    return {
-      id: imgItem.id,
-      type: 'rect',  // Treat as rect for now, generator handles image data
-      x: imgItem.position.xPercent,
-      y: imgItem.position.yPercent,
-      w: imgItem.position.wPercent,
-      h: imgItem.position.hPercent,
-      color: '#000000',
-      bgColor: '#ffffff',
-      // Store image data in a way the generator can access
-      imageData: imgItem.src,
-      imageFormat: imgItem.format,
-    } as LayoutElement & { imageData?: string; imageFormat?: string };
-  }
-
-  // Shape (rect or circle)
-  const shapeItem = item as ShapeElement;
-  return {
-    id: shapeItem.id,
-    type: shapeItem.type,
-    x: shapeItem.position.xPercent,
-    y: shapeItem.position.yPercent,
-    w: shapeItem.position.wPercent,
-    h: shapeItem.position.hPercent,
-    color: shapeItem.strokeColor || shapeItem.bgColor || '#000000',
-    bgColor: shapeItem.bgColor,
-    opacity: shapeItem.opacity,
-    radius: shapeItem.radius,
-  };
 };
 
 /**
@@ -211,12 +242,16 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
   const candidates = [primaryName, fallbackName].filter(Boolean) as string[];
   const errors: string[] = [];
 
+  // First attempt a light sanitization for common JSX text mistakes (e.g., leading ">" in text nodes)
+  const sanitizedContent = sanitizeCommonJsxText(content);
+
   for (const fileName of candidates) {
     const result = ts.transpileModule(content, {
       compilerOptions: {
         target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.ESNext,
-        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        module: ts.ModuleKind.CommonJS,
+        // Use a CJS-friendly resolver; "bundler" requires ESM modules and was tripping TSX parsing
+        moduleResolution: ts.ModuleResolutionKind.Node10,
         jsx: ts.JsxEmit.ReactJSX,
         isolatedModules: true,
         allowJs: true,
@@ -230,24 +265,87 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
       reportDiagnostics: true,
     });
 
-    if (!result.diagnostics || result.diagnostics.length === 0) {
-      return result.outputText;
+    // If the first pass fails and we modified the source, retry with the sanitized version
+    const finalResult =
+      result.diagnostics && result.diagnostics.length > 0 && sanitizedContent !== content
+        ? ts.transpileModule(sanitizedContent, {
+            compilerOptions: {
+              target: ts.ScriptTarget.ES2022,
+              module: ts.ModuleKind.CommonJS,
+              moduleResolution: ts.ModuleResolutionKind.Node10,
+              jsx: ts.JsxEmit.ReactJSX,
+              isolatedModules: true,
+              allowJs: true,
+              allowImportingTsExtensions: true,
+              experimentalDecorators: true,
+              useDefineForClassFields: false,
+              esModuleInterop: true,
+              allowSyntheticDefaultImports: true,
+            },
+            fileName,
+            reportDiagnostics: true,
+          })
+        : result;
+
+    if (!finalResult.diagnostics || finalResult.diagnostics.length === 0) {
+      return finalResult.outputText;
     }
 
-    const first = result.diagnostics[0];
+    const first = finalResult.diagnostics[0];
     const message = ts.flattenDiagnosticMessageText(first.messageText, '\n');
+    const suggestion = buildFriendlyHint(message, first);
     if (first.file && typeof first.start === 'number') {
       const { line, character } = ts.getLineAndCharacterOfPosition(first.file, first.start);
       const lineText = first.file.text.split(/\r?\n/)[line] || '';
       errors.push(
-        `TSX parse error: ${message} (at ${fileName}:${line + 1}:${character + 1})\n> ${line + 1} | ${lineText.trimEnd()}`,
+        `TSX parse error: ${message} (at ${fileName}:${line + 1}:${character + 1})\n> ${
+          line + 1
+        } | ${lineText.trimEnd()}${suggestion ? `\nSuggestion: ${suggestion}` : ''}`,
       );
     } else {
-      errors.push(`TSX parse error: ${message}`);
+      errors.push(`TSX parse error: ${message}${suggestion ? `\nSuggestion: ${suggestion}` : ''}`);
     }
   }
 
   throw new Error(errors[0] || 'TSX parse error: Unknown issue');
+};
+
+/**
+ * Light heuristic fixer: wraps text starting with ">" in JSX text nodes and escapes stray "&"
+ */
+const sanitizeCommonJsxText = (source: string) => {
+  const fixText = (text: string) => {
+    let updated = text.replace(/(^|\s)>(?=\S)/g, (_m, prefix) => `${prefix}{'>'}`);
+    updated = updated.replace(/(^|\s)&(?![a-zA-Z#]+;)(?=\S)/g, (_m, prefix) => `${prefix}&amp;`);
+    return updated;
+  };
+
+  return source.replace(/>([^<]+)</g, (full, textContent) => {
+    const fixed = fixText(textContent);
+    return `>${fixed}<`;
+  });
+};
+
+/**
+ * Produces user-friendly hints for common JSX syntax issues
+ */
+const buildFriendlyHint = (message: string, diagnostic: ts.Diagnostic) => {
+  const pos = typeof diagnostic.start === 'number' ? diagnostic.start : null;
+
+  const lineText =
+    pos !== null && diagnostic.file
+      ? diagnostic.file.text.split(/\r?\n/)[ts.getLineAndCharacterOfPosition(diagnostic.file, pos).line] || ''
+      : '';
+
+  if (message.includes('Unexpected token') && lineText.trimStart().startsWith('>')) {
+    return 'Wrap literal ">" text as {\">\"} or &gt; inside JSX.';
+  }
+
+  if (message.toLowerCase().includes('unterminated string')) {
+    return 'Check for missing closing quotes in JSX attributes or text.';
+  }
+
+  return '';
 };
 
 /**

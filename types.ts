@@ -19,6 +19,16 @@ export interface LayoutElement {
   radius?: number; // px border radius when available
   fontFamily?: string;
   lineHeight?: number;
+  strokeWidthPx?: number;
+  borderStyle?: 'solid' | 'dashed' | 'dotted' | 'double' | 'none';
+  shadow?: {
+    offsetXPx: number;
+    offsetYPx: number;
+    blurPx: number;
+    spreadPx: number;
+    color: string;
+    inset?: boolean;
+  };
   // Image-specific fields
   imageData?: string; // base64 data URL for embedded images
   imageFormat?: 'png' | 'jpeg' | 'gif' | 'webp';
@@ -88,4 +98,22 @@ export interface ExportOptions {
   includeImages?: boolean;
   embedFonts?: boolean;
   pageSize?: 'A4' | 'letter' | '16:9' | '4:3';
+}
+
+/**
+ * UI progress tracking types
+ */
+export type ProgressStage = 'transpiling' | 'rendering' | 'extracting' | 'generating';
+
+export interface ProgressState {
+  stage: ProgressStage;
+  percent: number;
+  message: string;
+}
+
+export interface ErrorInfo {
+  code: string;
+  message: string;
+  suggestion: string;
+  canRetry: boolean;
 }

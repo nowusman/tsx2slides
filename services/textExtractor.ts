@@ -7,6 +7,8 @@
 
 import { calculateRectPosition, getPositionKey, PreciseRect, ContainerInfo } from './positionCalculator';
 import { mapToStandardFont } from './fontMapper';
+import { createTextWrapperContext, extractTextLines as extractMultilineText, TextWrapperContext } from './textWrapper';
+import { getTextMeasurer, TextMeasurer } from './textMeasurement';
 
 export interface TextElement {
     id: string;
@@ -27,6 +29,8 @@ interface TextExtractionContext {
     visitedNodes: WeakSet<Node>;
     positionMap: Map<string, TextElement>;
     idCounter: number;
+    wrapperContext: TextWrapperContext;
+    measurer: TextMeasurer;
 }
 
 /**
@@ -34,12 +38,20 @@ interface TextExtractionContext {
  */
 export const createTextExtractionContext = (
     containerInfo: ContainerInfo
-): TextExtractionContext => ({
-    containerInfo,
-    visitedNodes: new WeakSet<Node>(),
-    positionMap: new Map<string, TextElement>(),
-    idCounter: 0,
-});
+): TextExtractionContext => {
+    const visitedNodes = new WeakSet<Node>();
+    const wrapperContext = createTextWrapperContext(containerInfo);
+    wrapperContext.visitedNodes = visitedNodes;
+
+    return {
+        containerInfo,
+        visitedNodes,
+        positionMap: new Map<string, TextElement>(),
+        idCounter: 0,
+        wrapperContext,
+        measurer: getTextMeasurer(),
+    };
+};
 
 /**
  * Converts RGB color to hex
@@ -223,85 +235,31 @@ export const extractTextLines = (
         return results;
     }
 
-    const textNodes = getTextNodes(element);
+    // Extract text lines with precise rects and deduplication
+    const multiline = extractMultilineText(element, context.wrapperContext, zIndex);
 
-    for (const node of textNodes) {
-        if (context.visitedNodes.has(node)) continue;
-        context.visitedNodes.add(node);
+    for (const line of multiline.lines) {
+        const posKey = getPositionKey(line.position);
+        if (context.positionMap.has(posKey)) continue;
 
-        const range = document.createRange();
-        range.selectNodeContents(node);
-        const rects = Array.from(range.getClientRects());
+        const lineMetrics = context.measurer.getLineHeight(line.fontFamily, line.fontSize, line.fontWeight);
 
-        // Get the text content
-        const fullText = node.textContent?.replace(/\s+/g, ' ').trim() || '';
-        if (!fullText) continue;
+        const textElement: TextElement = {
+            id: generateId(context),
+            type: 'text',
+            text: line.text,
+            position: line.position,
+            color: line.color,
+            fontSize: line.fontSize,
+            fontWeight: line.fontWeight,
+            fontFamily: line.fontFamily,
+            align: line.align,
+            lineHeight: lineMetrics.lineHeight,
+            zIndex,
+        };
 
-        // For single rect, create one element
-        if (rects.length === 1) {
-            const rect = rects[0];
-            if (rect.width < 0.5 || rect.height < 0.5) continue;
-
-            const position = calculateRectPosition(rect, context.containerInfo);
-            const posKey = getPositionKey(position);
-
-            if (!context.positionMap.has(posKey)) {
-                const textElement: TextElement = {
-                    id: generateId(context),
-                    type: 'text',
-                    text: fullText,
-                    position,
-                    color: rgbToHex(styles.color),
-                    fontSize: parseFloat(styles.fontSize) || 14,
-                    fontWeight: parseInt(styles.fontWeight, 10) >= 600 || styles.fontWeight === 'bold' ? 'bold' : 'normal',
-                    fontFamily: mapToStandardFont(styles.fontFamily),
-                    align: getTextAlign(styles),
-                    lineHeight: parseFloat(styles.lineHeight) || undefined,
-                    zIndex,
-                };
-
-                context.positionMap.set(posKey, textElement);
-                results.push(textElement);
-            }
-        } else {
-            // Multiple rects means multiple lines - for now, combine them
-            // This avoids text being split incorrectly
-            const combined = {
-                left: Math.min(...rects.map(r => r.left)),
-                top: Math.min(...rects.map(r => r.top)),
-                right: Math.max(...rects.map(r => r.right)),
-                bottom: Math.max(...rects.map(r => r.bottom)),
-                width: 0,
-                height: 0,
-                x: 0,
-                y: 0,
-                toJSON: () => ({}),
-            };
-            combined.width = combined.right - combined.left;
-            combined.height = combined.bottom - combined.top;
-
-            const position = calculateRectPosition(combined as DOMRect, context.containerInfo);
-            const posKey = getPositionKey(position);
-
-            if (!context.positionMap.has(posKey)) {
-                const textElement: TextElement = {
-                    id: generateId(context),
-                    type: 'text',
-                    text: fullText,
-                    position,
-                    color: rgbToHex(styles.color),
-                    fontSize: parseFloat(styles.fontSize) || 14,
-                    fontWeight: parseInt(styles.fontWeight, 10) >= 600 || styles.fontWeight === 'bold' ? 'bold' : 'normal',
-                    fontFamily: mapToStandardFont(styles.fontFamily),
-                    align: getTextAlign(styles),
-                    lineHeight: parseFloat(styles.lineHeight) || undefined,
-                    zIndex,
-                };
-
-                context.positionMap.set(posKey, textElement);
-                results.push(textElement);
-            }
-        }
+        context.positionMap.set(posKey, textElement);
+        results.push(textElement);
     }
 
     return results;

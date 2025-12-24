@@ -1,12 +1,12 @@
 <div align="center">
   <h1>TSX2Slides</h1>
   <p><strong>Convert TSX/JSX Components to PDF or PPTX Presentations</strong></p>
-  
+
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
   [![React](https://img.shields.io/badge/React-19.2-61dafb.svg)](https://reactjs.org/)
   [![Vite](https://img.shields.io/badge/Vite-6.2-646cff.svg)](https://vitejs.dev/)
-  
+
 </div>
 
 ---
@@ -65,6 +65,36 @@ The application leverages in-browser TypeScript transpilation to render React co
 - Modern ES modules architecture
 - Responsive UI with Lucide icons
 - Zero-config setup
+
+
+
+### Out of Scope (Not Currently Supported)
+
+1. **Animations/Transitions**: Static capture only
+
+2. **Interactive Elements**: Forms, buttons are visual only
+
+3. **External Resources**: No network requests for images/fonts
+
+4. **CSS :hover/:focus**: Only default state captured
+
+5. **Canvas Elements**: Raw canvas content not captured
+
+6. **WebGL/3D**: Not supported
+
+7. **Video/Audio**: Not supported
+   
+   
+
+### Partial Support
+
+1. **Gradients**: Solid color fallback
+
+2. **Shadows**: May not render in all cases
+
+3. **Complex Borders**: Simplified representation
+
+4. **Custom Fonts**: Mapped to standard alternatives
 
 ---
 
@@ -262,22 +292,27 @@ docker run -p 5173:5173 tsx2slides
 ### Basic Workflow
 
 1. **Start the Application**
+   
    ```bash
    npm run dev
    ```
 
 2. **Open in Browser**
+   
    - Navigate to `http://localhost:5173`
 
 3. **Upload Component**
+   
    - Drag and drop your `.tsx` or `.jsx` file into the upload area
    - Or click to browse and select a file
 
 4. **Select Export Format**
+   
    - Choose **PDF** for A4 landscape document
    - Choose **PPTX** for PowerPoint 16:9 presentation
 
 5. **Export**
+   
    - Click the export button
    - Your file will download automatically
 
@@ -432,28 +467,33 @@ We welcome contributions from the community! Here's how you can help:
 ### Development Process
 
 1. **Fork the Repository**
+   
    ```bash
    # Click "Fork" on GitHub, then clone your fork
    git clone https://github.com/YOUR_USERNAME/tsx2slides.git
    ```
 
 2. **Create a Feature Branch**
+   
    ```bash
    git checkout -b feature/your-feature-name
    ```
 
 3. **Make Your Changes**
+   
    - Write clean, documented code
    - Follow existing code style
    - Add tests if applicable
 
 4. **Commit Your Changes**
+   
    ```bash
    git add .
    git commit -m "feat: add your feature description"
    ```
 
 5. **Push and Create PR**
+   
    ```bash
    git push origin feature/your-feature-name
    # Then create a Pull Request on GitHub
@@ -541,6 +581,7 @@ copies of the Software...
 ## 🙏 Acknowledgments
 
 Built with ❤️ using:
+
 - React team for the amazing framework
 - TypeScript team for type safety
 - Vite team for blazing fast builds

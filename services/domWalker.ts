@@ -9,7 +9,8 @@ import { buildStackingContextTree, getPaintOrder } from './stackingContext';
 import { getContainerInfo, calculatePrecisePosition, PreciseRect, ContainerInfo } from './positionCalculator';
 import { createTextExtractionContext, extractTextLines, TextElement } from './textExtractor';
 import { createImageExtractionContext, extractAllImages, extractSvgElement, ExtractedImage } from './imageExtractor';
-import { mapToStandardFont } from './fontMapper';
+import { handleGradient } from './gradientHandler';
+import { extractBorder, extractShadow, getEffectiveRadius, BorderInfo, ShadowInfo } from './visualEffects';
 
 export interface ShapeElement {
     id: string;
@@ -20,6 +21,8 @@ export interface ShapeElement {
     strokeWidth: number;
     opacity: number;
     radius: number | undefined;
+    borderStyle?: BorderInfo['style'];
+    shadow?: ShadowInfo | null;
     zIndex: number;
 }
 
@@ -29,6 +32,7 @@ export interface EnhancedLayoutResult {
     elements: LayoutItem[];
     containerInfo: ContainerInfo;
     pageCount: number;
+    contentHeight: number;
 }
 
 /**
@@ -69,7 +73,12 @@ const extractShape = (
     styles: CSSStyleDeclaration,
     containerInfo: ContainerInfo,
     zIndex: number,
-    idCounter: { value: number }
+    idCounter: { value: number },
+    options?: {
+        bgColorOverride?: string;
+        border?: BorderInfo | null;
+        shadow?: ShadowInfo | null;
+    }
 ): ShapeElement | null => {
     const position = calculatePrecisePosition(element, containerInfo);
 
@@ -81,16 +90,19 @@ const extractShape = (
     if (opacity === 0) return null;
     if (styles.display === 'none' || styles.visibility === 'hidden') return null;
 
+    const border = options?.border ?? extractBorder(styles);
+
     // Get colors
-    const bgColor = rgbToHex(styles.backgroundColor);
-    const borderWidth = parseFloat(styles.borderWidth) || 0;
-    const strokeColor = borderWidth > 0 ? rgbToHex(styles.borderColor) : undefined;
+    const bgColorValue = options?.bgColorOverride ?? rgbToHex(styles.backgroundColor);
+    const bgColor = bgColorValue && bgColorValue !== '#00000000' ? bgColorValue : undefined;
+    const borderWidth = (border?.width ?? parseFloat(styles.borderWidth)) || 0;
+    const strokeColor = borderWidth > 0 ? (border ? border.color : rgbToHex(styles.borderColor)) : undefined;
 
     // Skip if no visible fill or stroke
     if (!bgColor && !strokeColor) return null;
 
     // Get border radius
-    const radiusValue = parseFloat(styles.borderRadius);
+    const radiusValue = border ? getEffectiveRadius(border) : parseFloat(styles.borderRadius);
     const radius = isNaN(radiusValue) ? undefined : radiusValue;
 
     return {
@@ -102,6 +114,8 @@ const extractShape = (
         strokeWidth: borderWidth,
         opacity: isNaN(opacity) ? 1 : opacity,
         radius: isCircle(styles) ? undefined : radius,
+        borderStyle: border?.style,
+        shadow: options?.shadow ?? null,
         zIndex,
     };
 };
@@ -111,6 +125,15 @@ const extractShape = (
  */
 export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutResult> => {
     const containerInfo = getContainerInfo(container);
+    const firstChild = container.firstElementChild as HTMLElement | null;
+    const contentHeight = Math.max(
+        container.scrollHeight,
+        containerInfo.height,
+        container.getBoundingClientRect().height,
+        firstChild?.scrollHeight ?? 0,
+        firstChild?.offsetHeight ?? 0,
+        firstChild?.getBoundingClientRect().height ?? 0,
+    );
 
     // Build stacking context and get paint order
     const stackingContext = buildStackingContextTree(container);
@@ -135,10 +158,36 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
         // Skip invisible elements
         if (styles.display === 'none' || styles.visibility === 'hidden') continue;
 
+        // Precompute visual effects
+        const border = extractBorder(styles);
+        const shadow = extractShadow(styles);
+        const gradientInfo = handleGradient(element, styles, true);
+
         // Extract shape (background, border)
-        const shape = extractShape(element, styles, containerInfo, i, idCounter);
+        const shape = extractShape(element, styles, containerInfo, i, idCounter, {
+            bgColorOverride: gradientInfo?.dominantColor,
+            border,
+            shadow,
+        });
         if (shape) {
             elements.push(shape);
+        }
+
+        // If the element has a gradient background and we rendered an image, capture it
+        if (gradientInfo && gradientInfo.type === 'image' && gradientInfo.value) {
+            const position = calculatePrecisePosition(element, containerInfo);
+            if (position.width >= 1 && position.height >= 1) {
+                elements.push({
+                    id: `img-${++idCounter.value}`,
+                    type: 'image',
+                    src: gradientInfo.value,
+                    position,
+                    format: 'png',
+                    zIndex: i,
+                    naturalWidth: position.width,
+                    naturalHeight: position.height,
+                });
+            }
         }
 
         // Extract text
@@ -162,13 +211,13 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
     elements.sort((a, b) => a.zIndex - b.zIndex);
 
     // Calculate page count based on content height
-    const contentHeight = Math.max(container.scrollHeight, containerInfo.height);
     const pageCount = Math.max(1, Math.ceil(contentHeight / containerInfo.height));
 
     return {
         elements,
         containerInfo,
         pageCount,
+        contentHeight,
     };
 };
 

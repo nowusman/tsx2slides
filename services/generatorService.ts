@@ -3,21 +3,50 @@
  * 
  * Generates PDF and PPTX files from layout data.
  * Supports text, shapes, and embedded images.
+ * Uses enhanced text measurement and positioning for accurate output.
  */
 
 import jsPDF from 'jspdf';
 import PptxGenJS from 'pptxgenjs';
-import { DocumentLayout, PageLayout, LayoutElement } from '../types';
+import { DocumentLayout, PageLayout, LayoutElement, ExportOptions } from '../types';
 import { getJsPDFFont, getPptxFont } from './fontMapper';
+import {
+  pxToPointsPDF,
+  pxToPointsPPTX,
+  pxToMM as pxToMm,
+  calculateBaselineOffset,
+  PDF_DIMENSIONS,
+  PPTX_DIMENSIONS,
+} from './fontSizeConverter';
 
 // PDF Constants (A4 Landscape)
-const PDF_W = 297; // mm
-const PDF_H = 210; // mm
+const PDF_W = PDF_DIMENSIONS.A4_LANDSCAPE.width; // 297 mm
+const PDF_H = PDF_DIMENSIONS.A4_LANDSCAPE.height; // 210 mm
+
+// PPTX Constants (16:9)
+const PPTX_W = PPTX_DIMENSIONS.STANDARD_16_9.width; // 10 inches
+const PPTX_H = PPTX_DIMENSIONS.STANDARD_16_9.height; // 5.625 inches
 
 // Conversion helpers
-const pxToMm = (px: number): number => px * (25.4 / 96);
 const percentToMm = (percent: number, dimension: number): number => (percent / 100) * dimension;
+const percentToInches = (percent: number, dimension: number): number => (percent / 100) * dimension;
 const pxToPoints = (px: number): number => px * 0.75;
+
+type ProgressCallback = (percent: number, message?: string) => void;
+
+type QualityPreset = {
+  imageScale: number;
+  imageQuality: number;
+  compression: 'FAST' | 'MEDIUM' | 'SLOW';
+  precision: number;
+  compressPdf: boolean;
+};
+
+const QUALITY_PRESETS: Record<'draft' | 'standard' | 'high', QualityPreset> = {
+  draft: { imageScale: 0.65, imageQuality: 0.6, compression: 'FAST', precision: 2, compressPdf: true },
+  standard: { imageScale: 0.85, imageQuality: 0.82, compression: 'MEDIUM', precision: 8, compressPdf: true },
+  high: { imageScale: 1, imageQuality: 1, compression: 'SLOW', precision: 16, compressPdf: false },
+};
 
 /**
  * Converts hex color to RGB object
@@ -34,16 +63,75 @@ const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
 };
 
 /**
+ * Determines the image format from a data URL
+ */
+const detectFormat = (dataUrl?: string): 'PNG' | 'JPEG' => {
+  if (!dataUrl) return 'PNG';
+  if (dataUrl.startsWith('data:image/jpeg') || dataUrl.startsWith('data:image/jpg')) return 'JPEG';
+  return 'PNG';
+};
+
+/**
+ * Downscales or recompresses an image data URL based on quality presets
+ */
+const prepareImageForQuality = async (
+  dataUrl: string,
+  preset: QualityPreset
+): Promise<{ data: string; format: 'PNG' | 'JPEG' }> => {
+  if (preset.imageScale === 1 && preset.imageQuality === 1) {
+    return { data: dataUrl, format: detectFormat(dataUrl) };
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const width = Math.max(1, Math.round(img.naturalWidth * preset.imageScale));
+      const height = Math.max(1, Math.round(img.naturalHeight * preset.imageScale));
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve({ data: dataUrl, format: detectFormat(dataUrl) });
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, height);
+      const format: 'PNG' | 'JPEG' = preset.compression === 'SLOW' ? detectFormat(dataUrl) : 'JPEG';
+      const encoded = canvas.toDataURL(
+        format === 'JPEG' ? 'image/jpeg' : 'image/png',
+        preset.imageQuality
+      );
+      resolve({ data: encoded, format });
+    };
+    img.onerror = () => resolve({ data: dataUrl, format: detectFormat(dataUrl) });
+    img.src = dataUrl;
+  });
+};
+
+/**
  * Generates a PDF file from the document layout
  */
-export const generatePDF = (layout: DocumentLayout) => {
+export const generatePDF = async (
+  layout: DocumentLayout,
+  options: ExportOptions = {},
+  onProgress?: ProgressCallback
+) => {
+  const quality = options.quality || 'standard';
+  const preset = QUALITY_PRESETS[quality];
+
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'mm',
     format: 'a4',
-  });
+    compressPdf: preset.compressPdf,
+    precision: preset.precision,
+  } as any);
 
-  layout.pages.forEach((page, index) => {
+  const totalElements = layout.pages.reduce((sum, page) => sum + page.elements.length, 0) || 1;
+  let processed = 0;
+
+  for (let index = 0; index < layout.pages.length; index++) {
+    const page = layout.pages[index];
     if (index > 0) doc.addPage();
 
     // Draw page background
@@ -57,12 +145,16 @@ export const generatePDF = (layout: DocumentLayout) => {
     const sortedElements = sortElementsForRendering(page.elements);
 
     // Render each element
-    sortedElements.forEach((el) => {
-      renderPdfElement(doc, el);
-    });
-  });
+    for (const el of sortedElements) {
+      await renderPdfElement(doc, el, preset);
+      processed += 1;
+      const percent = Math.min(98, Math.round((processed / totalElements) * 90) + 8);
+      onProgress?.(percent, 'Rendering PDF content');
+    }
+  }
 
   doc.save(`${sanitizeFilename(layout.title)}.pdf`);
+  onProgress?.(100, 'PDF saved locally');
 };
 
 /**
@@ -85,7 +177,7 @@ const sortElementsForRendering = (elements: LayoutElement[]): LayoutElement[] =>
 /**
  * Renders a single element to PDF
  */
-const renderPdfElement = (doc: jsPDF, el: LayoutElement) => {
+const renderPdfElement = async (doc: jsPDF, el: LayoutElement, preset: QualityPreset) => {
   const x = percentToMm(el.x, PDF_W);
   const y = percentToMm(el.y, PDF_H);
   const w = percentToMm(el.w, PDF_W);
@@ -94,8 +186,9 @@ const renderPdfElement = (doc: jsPDF, el: LayoutElement) => {
   // Handle image elements
   if (el.imageData) {
     try {
-      const format = el.imageFormat?.toUpperCase() || 'PNG';
-      doc.addImage(el.imageData, format as any, x, y, w, h);
+      const prepared = await prepareImageForQuality(el.imageData, preset);
+      const format = prepared.format;
+      doc.addImage(prepared.data, format as any, x, y, w, h, undefined, preset.compression);
     } catch (err) {
       console.warn('Failed to add image to PDF:', err);
     }
@@ -148,14 +241,23 @@ const renderPdfShape = (
   if (hasStroke) {
     const { r, g, b } = hexToRgb(el.color);
     doc.setDrawColor(r, g, b);
-    doc.setLineWidth(0.3);
+    const strokeWidth = el.strokeWidthPx ? pxToMm(el.strokeWidthPx) : 0.3;
+    doc.setLineWidth(strokeWidth);
+
+    if (el.borderStyle === 'dashed') {
+      doc.setLineDash([2, 2]);
+    } else if (el.borderStyle === 'dotted') {
+      doc.setLineDash([0.8, 1.6]);
+    } else {
+      doc.setLineDash([]);
+    }
   }
 
   // Determine draw mode
   const drawMode = el.bgColor && hasStroke ? 'FD' : el.bgColor ? 'F' : 'S';
 
   if (el.type === 'rect') {
-    const radius = el.radius ? Math.min(el.radius * 0.264, 10) : 0; // px to mm, max 10mm
+    const radius = el.radius ? Math.min(pxToMm(el.radius), 10) : 0; // px to mm, max 10mm
     if (radius > 0) {
       doc.roundedRect(x, y, w, h, radius, radius, drawMode);
     } else {
@@ -164,10 +266,15 @@ const renderPdfShape = (
   } else if (el.type === 'circle') {
     doc.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, drawMode);
   }
+
+  // Reset dash pattern to avoid leaking into subsequent shapes
+  if (hasStroke) {
+    doc.setLineDash([]);
+  }
 };
 
 /**
- * Renders text to PDF with proper positioning
+ * Renders text to PDF with proper positioning and accurate baseline calculation
  */
 const renderPdfText = (
   doc: jsPDF,
@@ -175,51 +282,72 @@ const renderPdfText = (
   x: number,
   y: number,
   w: number,
-  _h: number
+  h: number
 ) => {
   const { r, g, b } = hexToRgb(el.color || '#000000');
   doc.setTextColor(r, g, b);
 
-  // Font setup
+  // Font setup with accurate px to pt conversion
   const fontSizePx = el.fontSize || 16;
-  const fontSizePt = pxToPoints(fontSizePx);
+  const fontSizePt = pxToPointsPDF(fontSizePx);
   doc.setFontSize(fontSizePt);
 
   const fontName = getJsPDFFont(el.fontFamily || 'Arial');
-  const fontStyle = el.fontWeight === 'bold' ? 'bold' : 'normal';
-  doc.setFont(fontName, fontStyle);
+  const fontWeight = el.fontWeight || 'normal';
+  const fontStyle = fontWeight === 'bold' ? 'bold' : 'normal';
 
-  // Line height
+  try {
+    doc.setFont(fontName, fontStyle);
+  } catch {
+    // Fallback to helvetica if font not available
+    doc.setFont('helvetica', fontStyle);
+  }
+
+  // Line height calculation
   const lineHeightPx = el.lineHeight || fontSizePx * 1.2;
-  const lineHeightFactor = lineHeightPx / fontSizePx;
+  const lineHeightFactor = Math.max(1, lineHeightPx / fontSizePx);
   doc.setLineHeightFactor(lineHeightFactor);
 
   // Calculate text position based on alignment
   let textX = x;
-  if (el.align === 'center') textX = x + w / 2;
-  if (el.align === 'right') textX = x + w;
+  const align = el.align || 'left';
+  if (align === 'center') textX = x + w / 2;
+  if (align === 'right') textX = x + w;
 
-  // Split text to fit width
-  const textLines = doc.splitTextToSize(el.text!, w);
+  // Split text to fit within width, accounting for padding
+  const effectiveWidth = Math.max(w - 0.5, 1); // Small margin for safety
+  const textLines = doc.splitTextToSize(el.text!, effectiveWidth);
 
-  // Baseline offset for proper vertical positioning
-  const baselineOffset = fontSizePt * 0.3527; // pt to mm approximation
+  // Calculate baseline offset using precise conversion
+  // Text is positioned at baseline in PDF, so we need to offset from top
+  const baselineOffset = calculateBaselineOffset(fontSizePt);
 
+  // Render text with proper options
   doc.text(textLines, textX, y + baselineOffset, {
-    align: el.align || 'left',
-    maxWidth: w,
+    align: align,
+    maxWidth: effectiveWidth,
+    lineHeightFactor: lineHeightFactor,
   });
 };
 
 /**
  * Generates a PPTX file from the document layout
  */
-export const generatePPTX = (layout: DocumentLayout) => {
+export const generatePPTX = async (
+  layout: DocumentLayout,
+  options: ExportOptions = {},
+  onProgress?: ProgressCallback
+) => {
   const pptx = new PptxGenJS();
   pptx.layout = 'LAYOUT_16x9';
   pptx.title = layout.title;
 
-  layout.pages.forEach((page) => {
+  const quality = options.quality || 'standard';
+  const preset = QUALITY_PRESETS[quality];
+  const totalElements = layout.pages.reduce((sum, page) => sum + page.elements.length, 0) || 1;
+  let processed = 0;
+
+  for (const page of layout.pages) {
     const slide = pptx.addSlide();
 
     // Set background
@@ -236,18 +364,22 @@ export const generatePPTX = (layout: DocumentLayout) => {
     const sortedElements = sortElementsForRendering(page.elements);
 
     // Render each element
-    sortedElements.forEach((el) => {
-      renderPptxElement(pptx, slide, el);
-    });
-  });
+    for (const el of sortedElements) {
+      await renderPptxElement(pptx, slide, el, preset);
+      processed += 1;
+      const percent = Math.min(98, Math.round((processed / totalElements) * 90) + 8);
+      onProgress?.(percent, 'Placing shapes and text in PPTX');
+    }
+  }
 
-  pptx.writeFile({ fileName: `${sanitizeFilename(layout.title)}.pptx` });
+  await pptx.writeFile({ fileName: `${sanitizeFilename(layout.title)}.pptx` });
+  onProgress?.(100, 'PPTX ready to download');
 };
 
 /**
  * Renders a single element to PPTX
  */
-const renderPptxElement = (pptx: PptxGenJS, slide: any, el: LayoutElement) => {
+const renderPptxElement = async (pptx: PptxGenJS, slide: any, el: LayoutElement, preset: QualityPreset) => {
   const x = `${el.x}%`;
   const y = `${el.y}%`;
   const w = `${el.w}%`;
@@ -256,8 +388,9 @@ const renderPptxElement = (pptx: PptxGenJS, slide: any, el: LayoutElement) => {
   // Handle image elements
   if (el.imageData) {
     try {
+      const prepared = await prepareImageForQuality(el.imageData, preset);
       slide.addImage({
-        data: el.imageData,
+        data: prepared.data,
         x,
         y,
         w,
@@ -284,9 +417,18 @@ const renderPptxElement = (pptx: PptxGenJS, slide: any, el: LayoutElement) => {
         : undefined,
     };
 
-    // Add border if color differs from fill
-    if (el.color && el.color !== el.bgColor) {
-      options.line = { color: el.color.replace('#', ''), width: 1 };
+    // Add border if present
+    if (el.color || el.strokeWidthPx) {
+      options.line = {
+        color: (el.color || el.bgColor || '#000000').replace('#', ''),
+        width: el.strokeWidthPx ? pxToPointsPPTX(el.strokeWidthPx) : 1,
+      };
+
+      if (el.borderStyle === 'dashed') {
+        options.line.dashType = 'dash';
+      } else if (el.borderStyle === 'dotted') {
+        options.line.dashType = 'sysDot';
+      }
     }
 
     // Add radius if present
@@ -306,15 +448,25 @@ const renderPptxElement = (pptx: PptxGenJS, slide: any, el: LayoutElement) => {
       w,
       h,
       fill: el.bgColor ? { color: el.bgColor.replace('#', '') } : undefined,
-      line: el.color ? { color: el.color.replace('#', ''), width: 1 } : undefined,
+      line: el.color || el.strokeWidthPx ? {
+        color: (el.color || el.bgColor || '#000000').replace('#', ''),
+        width: el.strokeWidthPx ? pxToPointsPPTX(el.strokeWidthPx) : 1,
+        dashType: el.borderStyle === 'dashed' ? 'dash' : el.borderStyle === 'dotted' ? 'sysDot' : undefined,
+      } : undefined,
     });
     return;
   }
 
-  // Handle text
+  // Handle text with improved positioning
   if (el.type === 'text' && el.text) {
-    const fontSize = el.fontSize ? pxToPoints(el.fontSize) : 12;
+    // Use accurate px to points conversion for PPTX
+    const fontSizePx = el.fontSize || 16;
+    const fontSize = pxToPointsPPTX(fontSizePx);
     const fontFace = getPptxFont(el.fontFamily || 'Arial');
+
+    // Calculate line spacing - PPTX uses points
+    const lineHeightPx = el.lineHeight || fontSizePx * 1.2;
+    const lineSpacingPt = pxToPointsPPTX(lineHeightPx);
 
     slide.addText(el.text, {
       x,
@@ -329,7 +481,9 @@ const renderPptxElement = (pptx: PptxGenJS, slide: any, el: LayoutElement) => {
       valign: 'top',
       wrap: true,
       shrinkText: false,
-      lineSpacing: el.lineHeight ? pxToPoints(el.lineHeight) : undefined,
+      lineSpacing: lineSpacingPt,
+      paraSpaceBefore: 0,
+      paraSpaceAfter: 0,
     });
     return;
   }

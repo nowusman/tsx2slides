@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import { DocumentLayout, LayoutElement, PageLayout } from '../types';
 
 const BASE_WIDTH = 1280;
@@ -8,6 +9,28 @@ interface Props {
 }
 
 const PreviewElement: React.FC<{ el: LayoutElement; scale: number }> = ({ el, scale }) => {
+  if (el.imageData || el.type === 'image') {
+    return (
+      <div
+        style={{
+          position: 'absolute',
+          left: `${el.x}%`,
+          top: `${el.y}%`,
+          width: `${el.w}%`,
+          height: `${el.h}%`,
+          overflow: 'hidden',
+          borderRadius: el.radius ? `${el.radius * scale}px` : undefined,
+        }}
+      >
+        <img
+          src={el.imageData}
+          alt=""
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      </div>
+    );
+  }
+
   if (el.type === 'line') {
     return (
       <div
@@ -29,6 +52,8 @@ const PreviewElement: React.FC<{ el: LayoutElement; scale: number }> = ({ el, sc
 
   const fontSize = (el.fontSize || 14) * scale;
   const borderRadius = el.type === 'rect' ? (el.radius ? `${el.radius * scale}px` : '6px') : el.type === 'circle' ? '50%' : undefined;
+  const borderWidth = el.strokeWidthPx ? el.strokeWidthPx * scale : el.color && el.color !== el.bgColor ? 1.5 * scale : undefined;
+  const borderStyle = el.borderStyle === 'dashed' ? 'dashed' : el.borderStyle === 'dotted' ? 'dotted' : 'solid';
 
   const style: React.CSSProperties = {
     position: 'absolute',
@@ -37,7 +62,7 @@ const PreviewElement: React.FC<{ el: LayoutElement; scale: number }> = ({ el, sc
     width: `${el.w}%`,
     height: `${el.h}%`,
     backgroundColor: el.type === 'rect' || el.type === 'circle' ? el.bgColor : undefined,
-    border: el.type === 'rect' && el.color && el.color !== el.bgColor ? `1.5px solid ${el.color}` : undefined,
+    border: el.type !== 'text' && borderWidth ? `${borderWidth}px ${borderStyle} ${el.color || '#ffffff'}` : undefined,
     borderRadius,
     color: el.color,
     fontSize: `${fontSize}px`,
@@ -58,9 +83,16 @@ const PreviewElement: React.FC<{ el: LayoutElement; scale: number }> = ({ el, sc
   return <div style={style}>{el.text && <span>{el.text}</span>}</div>;
 };
 
-const SlidePreview: React.FC<{ page: PageLayout }> = ({ page }) => {
+interface SlidePreviewProps {
+  page: PageLayout;
+  zoom: number;
+  onScaleChange?: (scale: number) => void;
+}
+
+const SlidePreview: React.FC<SlidePreviewProps> = ({ page, zoom, onScaleChange }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
+  const lastFit = useRef<number>(1);
 
   useEffect(() => {
     const el = ref.current;
@@ -68,7 +100,12 @@ const SlidePreview: React.FC<{ page: PageLayout }> = ({ page }) => {
 
     const updateScale = () => {
       const width = el.clientWidth;
-      setScale(width / BASE_WIDTH);
+      const fitValue = width / BASE_WIDTH;
+      setScale(fitValue);
+      if (onScaleChange && Math.abs(fitValue - lastFit.current) > 0.002) {
+        lastFit.current = fitValue;
+        onScaleChange(fitValue);
+      }
     };
 
     updateScale();
@@ -77,10 +114,12 @@ const SlidePreview: React.FC<{ page: PageLayout }> = ({ page }) => {
     return () => observer.disconnect();
   }, []);
 
+  const effectiveScale = scale * zoom;
+
   return (
     <div className="slide" ref={ref} style={{ backgroundColor: page.bgColor || '#fff' }}>
       {page.elements.map((el) => (
-        <PreviewElement key={el.id} el={el} scale={scale} />
+        <PreviewElement key={el.id} el={el} scale={effectiveScale} />
       ))}
       <div className="slide-number">Slide {page.pageNumber}</div>
     </div>
@@ -88,11 +127,43 @@ const SlidePreview: React.FC<{ page: PageLayout }> = ({ page }) => {
 };
 
 export const LayoutPreview: React.FC<Props> = ({ layout }) => {
+  const [zoom, setZoom] = useState(1);
+  const [fitScale, setFitScale] = useState(1);
+
+  const handleZoom = (delta: number) => {
+    setZoom((prev) => {
+      const next = Math.min(2, Math.max(0.5, parseFloat((prev + delta).toFixed(2))));
+      return next;
+    });
+  };
+
+  const handleFit = () => setZoom(1);
+
   return (
     <div className="layout-preview">
-      <div className="preview-title">Preview: {layout.title}</div>
+      <div className="preview-head">
+        <div className="preview-title">Preview: {layout.title}</div>
+        <div className="zoom-controls">
+          <button className="ghost" onClick={() => handleZoom(-0.1)}>
+            <ZoomOut size={14} />
+          </button>
+          <div className="zoom-readout">{Math.round(fitScale * zoom * 100)}%</div>
+          <button className="ghost" onClick={() => handleZoom(0.1)}>
+            <ZoomIn size={14} />
+          </button>
+          <button className="ghost" onClick={handleFit}>
+            <Maximize2 size={14} />
+            <span>Fit to width</span>
+          </button>
+        </div>
+      </div>
       {layout.pages.map((page) => (
-        <SlidePreview key={page.pageNumber} page={page} />
+        <SlidePreview
+          key={page.pageNumber}
+          page={page}
+          onScaleChange={(value) => setFitScale(value)}
+          zoom={zoom}
+        />
       ))}
       <div className="preview-footnote">
         {layout.pages.length} page{layout.pages.length > 1 ? 's' : ''} • {layout.summary}
