@@ -39,14 +39,32 @@ export interface EnhancedLayoutResult {
  * Converts RGB color to hex format
  */
 const rgbToHex = (rgb: string | null): string | undefined => {
-    if (!rgb || rgb === 'rgba(0, 0, 0, 0)' || rgb === 'transparent') return undefined;
-    if (rgb.startsWith('#')) return rgb;
+    if (!rgb || rgb === 'transparent') return undefined;
 
-    const result = rgb.match(/\d+/g);
-    if (!result || result.length < 3) return undefined;
+    // Match rgb or rgba with flexible spacing
+    const match = rgb.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
+    if (!match) {
+        if (rgb.startsWith('#')) return rgb;
+        return undefined;
+    }
 
-    const [r, g, b] = result.map((v) => parseInt(v, 10));
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+    const r = parseInt(match[1], 10);
+    const g = parseInt(match[2], 10);
+    const b = parseInt(match[3], 10);
+    const a = match[4] ? parseFloat(match[4]) : 1;
+
+    // If fully transparent, return undefined so it doesn't create a shape
+    if (a === 0) return undefined;
+
+    const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+
+    // If there's partial transparency, add alpha to hex
+    if (a < 1) {
+        const alphaHex = Math.round(a * 255).toString(16).padStart(2, '0');
+        return `${hex}${alphaHex}`;
+    }
+
+    return hex;
 };
 
 /**

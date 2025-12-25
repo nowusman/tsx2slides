@@ -42,7 +42,7 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
     width: `${CONTAINER_WIDTH}px`,
     height: `${CONTAINER_HEIGHT}px`,
     overflow: 'auto',
-    visibility: 'hidden',
+    visibility: 'visible',
     pointerEvents: 'none',
     background: '#ffffff',
   });
@@ -162,59 +162,66 @@ const extractLayoutEnhanced = async (
  * Converts new LayoutItem to legacy LayoutElement format
  */
 const convertToLegacyFormat = (item: LayoutItem): LayoutElement => {
-    if (item.type === 'text') {
-        const textItem = item as TextElement;
-        return {
-            id: textItem.id,
-            type: 'text',
-            text: textItem.text,
-            x: textItem.position.xPercent,
-            y: textItem.position.yPercent,
-            w: textItem.position.wPercent,
-            h: textItem.position.hPercent,
-            color: textItem.color,
-            fontSize: textItem.fontSize,
-            fontWeight: textItem.fontWeight,
-            fontFamily: textItem.fontFamily,
-            align: textItem.align,
-            lineHeight: textItem.lineHeight,
-        };
-    }
-
-    if (item.type === 'image') {
-        const imgItem = item as ExtractedImage;
-        return {
-            id: imgItem.id,
-            type: 'image',
-            x: imgItem.position.xPercent,
-            y: imgItem.position.yPercent,
-            w: imgItem.position.wPercent,
-            h: imgItem.position.hPercent,
-            imageData: imgItem.src,
-            imageFormat: imgItem.format,
-            color: '#000000',
-            bgColor: '#ffffff',
-            strokeWidthPx: 0,
-        } as LayoutElement & { imageData?: string; imageFormat?: string };
-    }
-
-    // Shape (rect or circle)
-    const shapeItem = item as ShapeElement;
+  if (item.type === 'text') {
+    const textItem = item as TextElement;
     return {
-        id: shapeItem.id,
-        type: shapeItem.type,
-        x: shapeItem.position.xPercent,
-        y: shapeItem.position.yPercent,
-        w: shapeItem.position.wPercent,
-        h: shapeItem.position.hPercent,
-        color: shapeItem.strokeColor || shapeItem.bgColor || '#000000',
-        bgColor: shapeItem.bgColor,
-        opacity: shapeItem.opacity,
-        radius: shapeItem.radius,
-        strokeWidthPx: shapeItem.strokeWidth,
-        borderStyle: shapeItem.borderStyle,
-        shadow: shapeItem.shadow ?? undefined,
+      id: textItem.id,
+      type: 'text',
+      text: textItem.text,
+      x: textItem.position.xPercent,
+      y: textItem.position.yPercent,
+      w: textItem.position.wPercent,
+      h: textItem.position.hPercent,
+      color: textItem.color,
+      fontSize: textItem.fontSize,
+      fontWeight: textItem.fontWeight,
+      fontFamily: textItem.fontFamily,
+      align: textItem.align,
+      lineHeight: textItem.lineHeight,
     };
+  }
+
+  if (item.type === 'image') {
+    const imgItem = item as ExtractedImage;
+    return {
+      id: imgItem.id,
+      type: 'image',
+      x: imgItem.position.xPercent,
+      y: imgItem.position.yPercent,
+      w: imgItem.position.wPercent,
+      h: imgItem.position.hPercent,
+      imageData: imgItem.src,
+      imageFormat: imgItem.format,
+      color: '#000000',
+      bgColor: '#ffffff',
+      strokeWidthPx: 0,
+    } as LayoutElement & { imageData?: string; imageFormat?: string };
+  }
+
+  // Shape (rect or circle)
+  const shapeItem = item as ShapeElement;
+  return {
+    id: shapeItem.id,
+    type: shapeItem.type,
+    x: shapeItem.position.xPercent,
+    y: shapeItem.position.yPercent,
+    w: shapeItem.position.wPercent,
+    h: shapeItem.position.hPercent,
+    color: shapeItem.strokeColor || shapeItem.bgColor || '#000000',
+    bgColor: shapeItem.bgColor,
+    opacity: shapeItem.opacity,
+    radius: shapeItem.radius,
+    strokeWidthPx: shapeItem.strokeWidth,
+    borderStyle: shapeItem.borderStyle,
+    shadow: shapeItem.shadow ? {
+      offsetXPx: shapeItem.shadow.offsetX,
+      offsetYPx: shapeItem.shadow.offsetY,
+      blurPx: shapeItem.shadow.blur,
+      spreadPx: shapeItem.shadow.spread,
+      color: shapeItem.shadow.color,
+      inset: shapeItem.shadow.inset,
+    } : undefined,
+  };
 };
 
 /**
@@ -252,7 +259,7 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
         module: ts.ModuleKind.CommonJS,
         // Use a CJS-friendly resolver; "bundler" requires ESM modules and was tripping TSX parsing
         moduleResolution: ts.ModuleResolutionKind.Node10,
-        jsx: ts.JsxEmit.ReactJSX,
+        jsx: ts.JsxEmit.React,
         isolatedModules: true,
         allowJs: true,
         allowImportingTsExtensions: true,
@@ -269,22 +276,22 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
     const finalResult =
       result.diagnostics && result.diagnostics.length > 0 && sanitizedContent !== content
         ? ts.transpileModule(sanitizedContent, {
-            compilerOptions: {
-              target: ts.ScriptTarget.ES2022,
-              module: ts.ModuleKind.CommonJS,
-              moduleResolution: ts.ModuleResolutionKind.Node10,
-              jsx: ts.JsxEmit.ReactJSX,
-              isolatedModules: true,
-              allowJs: true,
-              allowImportingTsExtensions: true,
-              experimentalDecorators: true,
-              useDefineForClassFields: false,
-              esModuleInterop: true,
-              allowSyntheticDefaultImports: true,
-            },
-            fileName,
-            reportDiagnostics: true,
-          })
+          compilerOptions: {
+            target: ts.ScriptTarget.ES2022,
+            module: ts.ModuleKind.CommonJS,
+            moduleResolution: ts.ModuleResolutionKind.Node10,
+            jsx: ts.JsxEmit.ReactJSX,
+            isolatedModules: true,
+            allowJs: true,
+            allowImportingTsExtensions: true,
+            experimentalDecorators: true,
+            useDefineForClassFields: false,
+            esModuleInterop: true,
+            allowSyntheticDefaultImports: true,
+          },
+          fileName,
+          reportDiagnostics: true,
+        })
         : result;
 
     if (!finalResult.diagnostics || finalResult.diagnostics.length === 0) {
@@ -298,8 +305,7 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
       const { line, character } = ts.getLineAndCharacterOfPosition(first.file, first.start);
       const lineText = first.file.text.split(/\r?\n/)[line] || '';
       errors.push(
-        `TSX parse error: ${message} (at ${fileName}:${line + 1}:${character + 1})\n> ${
-          line + 1
+        `TSX parse error: ${message} (at ${fileName}:${line + 1}:${character + 1})\n> ${line + 1
         } | ${lineText.trimEnd()}${suggestion ? `\nSuggestion: ${suggestion}` : ''}`,
       );
     } else {
