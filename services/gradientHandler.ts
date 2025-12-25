@@ -6,6 +6,7 @@
  */
 
 import { ContainerInfo, calculatePrecisePosition, PreciseRect } from './positionCalculator';
+import { rgbToHex, standardizeColor } from './colorUtils';
 
 export interface GradientResult {
     type: 'solid' | 'image';
@@ -62,7 +63,7 @@ const parseGradientStops = (gradient: string): GradientColorStop[] => {
         }
 
         stops.push({
-            color: normalizeColor(m.color),
+            color: standardizeColor(m.color),
             position: pos,
         });
     }
@@ -70,56 +71,7 @@ const parseGradientStops = (gradient: string): GradientColorStop[] => {
     return stops;
 };
 
-/**
- * Normalizes a color string to hex format
- */
-const normalizeColor = (color: string): string => {
-    // Handle named colors
-    const namedColors: Record<string, string> = {
-        white: '#ffffff',
-        black: '#000000',
-        red: '#ff0000',
-        green: '#00ff00',
-        blue: '#0000ff',
-        yellow: '#ffff00',
-        orange: '#ffa500',
-        purple: '#800080',
-        pink: '#ffc0cb',
-        gray: '#808080',
-        grey: '#808080',
-        transparent: '#00000000',
-    };
-
-    const lowerColor = color.toLowerCase().trim();
-    if (namedColors[lowerColor]) {
-        return namedColors[lowerColor];
-    }
-
-    // Handle hex colors
-    if (color.startsWith('#')) {
-        return color;
-    }
-
-    // Handle rgb/rgba
-    const rgbMatch = color.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-    if (rgbMatch) {
-        const r = parseInt(rgbMatch[1]).toString(16).padStart(2, '0');
-        const g = parseInt(rgbMatch[2]).toString(16).padStart(2, '0');
-        const b = parseInt(rgbMatch[3]).toString(16).padStart(2, '0');
-        return `#${r}${g}${b}`;
-    }
-
-    // Handle hsl/hsla
-    const hslMatch = color.match(/hsla?\(\s*(\d+)\s*,\s*(\d+)%\s*,\s*(\d+)%/);
-    if (hslMatch) {
-        const h = parseInt(hslMatch[1]);
-        const s = parseInt(hslMatch[2]) / 100;
-        const l = parseInt(hslMatch[3]) / 100;
-        return hslToHex(h, s, l);
-    }
-
-    return '#000000';
-};
+// normalizeColor removed and replaced by standardizeColor from colorUtils
 
 /**
  * Converts HSL to hex color
@@ -171,17 +123,29 @@ const calculateDominantColor = (stops: GradientColorStop[]): string => {
 };
 
 /**
- * Converts hex color to RGB components
+ * Converts hex color to RGB components, handling alpha
  */
-const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
-    const match = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-    if (!match) return { r: 0, g: 0, b: 0 };
+const hexToRgb = (hex: string): { r: number; g: number; b: number; a: number } => {
+    if (!hex) return { r: 0, g: 0, b: 0, a: 0 };
 
-    return {
-        r: parseInt(match[1], 16),
-        g: parseInt(match[2], 16),
-        b: parseInt(match[3], 16),
-    };
+    // Support 3, 4, 6, 8 digit hex
+    let r = 0, g = 0, b = 0, a = 1;
+
+    if (hex.startsWith('#')) {
+        if (hex.length === 4 || hex.length === 5) {
+            r = parseInt(hex[1] + hex[1], 16);
+            g = parseInt(hex[2] + hex[2], 16);
+            b = parseInt(hex[3] + hex[3], 16);
+            if (hex.length === 5) a = parseInt(hex[4] + hex[4], 16) / 255;
+        } else if (hex.length === 7 || hex.length === 9) {
+            r = parseInt(hex.slice(1, 3), 16);
+            g = parseInt(hex.slice(3, 5), 16);
+            b = parseInt(hex.slice(5, 7), 16);
+            if (hex.length === 9) a = parseInt(hex.slice(7, 9), 16) / 255;
+        }
+    }
+
+    return { r, g, b, a };
 };
 
 /**
@@ -249,11 +213,12 @@ export const handleGradient = (
 
     // If no gradient, return solid background color
     if (!bg || bg === 'none' || !isGradient(bg)) {
-        const color = normalizeColor(bgColor || 'transparent');
+        const color = rgbToHex(bgColor);
+        const dominant = color || '#00000000'; // Fully transparent if no color
         return {
             type: 'solid',
-            value: color,
-            dominantColor: color,
+            value: dominant,
+            dominantColor: dominant,
             originalGradient: '',
         };
     }

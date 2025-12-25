@@ -6,6 +6,7 @@
  */
 
 import { PreciseRect, ContainerInfo, calculatePrecisePosition } from './positionCalculator';
+import { rgbToHex } from './colorUtils';
 
 /**
  * Border information extracted from CSS
@@ -67,27 +68,7 @@ export interface VisualEffects {
     filter: string | null;
 }
 
-/**
- * Converts RGB color string to hex
- */
-const rgbToHex = (rgb: string | null): string => {
-    if (!rgb) return '#000000';
-
-    const match = rgb.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,\s*([\d.]+))?\s*\)/);
-    if (!match) return rgb.startsWith('#') ? rgb : '#000000';
-
-    const r = parseInt(match[1]).toString(16).padStart(2, '0');
-    const g = parseInt(match[2]).toString(16).padStart(2, '0');
-    const b = parseInt(match[3]).toString(16).padStart(2, '0');
-
-    // Include alpha if present
-    if (match[4]) {
-        const a = Math.round(parseFloat(match[4]) * 255).toString(16).padStart(2, '0');
-        return `#${r}${g}${b}${a}`;
-    }
-
-    return `#${r}${g}${b}`;
-};
+// rgbToHex removed and imported from colorUtils
 
 /**
  * Parses a CSS border value
@@ -146,7 +127,7 @@ export const extractShadow = (styles: CSSStyleDeclaration): ShadowInfo | null =>
 
     // Extract color first (it can be anywhere in the string)
     const colorMatch = shadowValue.match(/(rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}|\b[a-z]+\b)(?:\s|$)/i);
-    const color = colorMatch ? rgbToHex(colorMatch[1]) : '#000000';
+    const color = colorMatch ? (rgbToHex(colorMatch[1]) || '#00000000') : '#00000000';
 
     // Extract numeric values
     const numericPart = shadowValue.replace(/(rgba?\([^)]+\)|#[0-9a-fA-F]{3,8}|\b[a-z]+\b)/gi, '').trim();
@@ -359,14 +340,23 @@ const hexToRgba = (hex: string): { r: number; g: number; b: number; a: number } 
  * Converts hex color to RGB components
  */
 const hexToRgb = (hex: string): { r: number; g: number; b: number } => {
-    const match = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i);
-    if (!match) return { r: 0, g: 0, b: 0 };
+    if (!hex) return { r: 0, g: 0, b: 0 };
 
-    return {
-        r: parseInt(match[1], 16),
-        g: parseInt(match[2], 16),
-        b: parseInt(match[3], 16),
-    };
+    let r = 0, g = 0, b = 0;
+
+    if (hex.startsWith('#')) {
+        if (hex.length === 4 || hex.length === 5) {
+            r = parseInt(hex[1] + hex[1], 16);
+            g = parseInt(hex[2] + hex[2], 16);
+            b = parseInt(hex[3] + hex[3], 16);
+        } else if (hex.length === 7 || hex.length === 9) {
+            r = parseInt(hex.slice(1, 3), 16);
+            g = parseInt(hex.slice(3, 5), 16);
+            b = parseInt(hex.slice(5, 7), 16);
+        }
+    }
+
+    return { r, g, b };
 };
 
 /**

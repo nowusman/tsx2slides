@@ -8,6 +8,7 @@
 import { PreciseRect, ContainerInfo, calculateRectPosition } from './positionCalculator';
 import { mapToStandardFont } from './fontMapper';
 import { getTextMeasurer } from './textMeasurement';
+import { standardizeColor } from './colorUtils';
 
 export interface TextLine {
     id: string;
@@ -51,22 +52,6 @@ export const createTextWrapperContext = (containerInfo: ContainerInfo): TextWrap
  */
 const generateLineId = (context: TextWrapperContext): string => {
     return `line_${++context.idCounter}`;
-};
-
-/**
- * Extracts RGB values from a color string
- */
-const rgbToHex = (rgb: string | null): string => {
-    if (!rgb) return '#000000';
-
-    const match = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
-    if (!match) return rgb.startsWith('#') ? rgb : '#000000';
-
-    const r = parseInt(match[1]).toString(16).padStart(2, '0');
-    const g = parseInt(match[2]).toString(16).padStart(2, '0');
-    const b = parseInt(match[3]).toString(16).padStart(2, '0');
-
-    return `#${r}${g}${b}`;
 };
 
 /**
@@ -166,7 +151,7 @@ export const extractTextLines = (
     const fontSize = parseFloat(styles.fontSize) || 16;
     const fontFamily = mapToStandardFont(styles.fontFamily);
     const fontWeight = (parseInt(styles.fontWeight) >= 600 || styles.fontWeight === 'bold') ? 'bold' : 'normal';
-    const color = rgbToHex(styles.color);
+    const color = standardizeColor(styles.color);
     const align = getTextAlign(styles);
 
     // Get all text nodes within this element

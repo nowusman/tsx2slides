@@ -9,6 +9,7 @@ import { calculateRectPosition, getPositionKey, PreciseRect, ContainerInfo } fro
 import { mapToStandardFont } from './fontMapper';
 import { createTextWrapperContext, extractTextLines as extractMultilineText, TextWrapperContext } from './textWrapper';
 import { getTextMeasurer, TextMeasurer } from './textMeasurement';
+import { standardizeColor } from './colorUtils';
 
 export interface TextElement {
     id: string;
@@ -52,21 +53,6 @@ export const createTextExtractionContext = (
         measurer: getTextMeasurer(),
     };
 };
-
-/**
- * Converts RGB color to hex
- */
-const rgbToHex = (rgb: string | null): string => {
-    if (!rgb || rgb === 'rgba(0, 0, 0, 0)' || rgb === 'transparent') return '#000000';
-    if (rgb.startsWith('#')) return rgb;
-
-    const result = rgb.match(/\d+/g);
-    if (!result || result.length < 3) return '#000000';
-
-    const [r, g, b] = result.map((v) => parseInt(v, 10));
-    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-};
-
 /**
  * Extracts text alignment from CSS
  */
@@ -147,7 +133,7 @@ const extractTextNode = (
         type: 'text',
         text,
         position,
-        color: rgbToHex(styles.color),
+        color: standardizeColor(styles.color),
         fontSize,
         fontWeight: parseInt(styles.fontWeight, 10) >= 600 || styles.fontWeight === 'bold' ? 'bold' : 'normal',
         fontFamily: mapToStandardFont(styles.fontFamily),

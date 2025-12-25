@@ -13,6 +13,7 @@ import { walkDom, validateElements, LayoutItem, ShapeElement } from './domWalker
 import { TextElement } from './textExtractor';
 import { ExtractedImage } from './imageExtractor';
 import { paginateLayoutItems } from './pageBreaker';
+import { rgbToHex } from './colorUtils';
 
 const CONTAINER_WIDTH = 1280;
 const CONTAINER_HEIGHT = 720;
@@ -36,6 +37,7 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
 
   // Normalize the hidden stage so measurements are consistent even if external CSS fails to load
   Object.assign(container.style, {
+    all: 'initial', // Reset all inherited styles
     position: 'absolute',
     left: '-9999px',
     top: '-9999px',
@@ -45,6 +47,9 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
     visibility: 'visible',
     pointerEvents: 'none',
     background: '#ffffff',
+    color: '#000000',
+    colorScheme: 'light',
+    fontFamily: 'Arial, sans-serif',
   });
 
   // Transpile TSX to JavaScript
@@ -224,19 +229,7 @@ const convertToLegacyFormat = (item: LayoutItem): LayoutElement => {
   };
 };
 
-/**
- * Converts RGB color string to hex
- */
-const rgbToHex = (rgb: string | null): string | undefined => {
-  if (!rgb || rgb === 'rgba(0, 0, 0, 0)' || rgb === 'transparent') return undefined;
-  if (rgb.startsWith('#')) return rgb;
-
-  const result = rgb.match(/\d+/g);
-  if (!result || result.length < 3) return undefined;
-
-  const [r, g, b] = result.map((v) => parseInt(v, 10));
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-};
+// rgbToHex removed and imported from colorUtils
 
 /**
  * Transpiles TSX content to JavaScript

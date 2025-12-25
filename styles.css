@@ -724,6 +724,7 @@ button {
   width: 1280px;
   height: 720px;
   background: white;
+  color: #000000;
   overflow: auto;
   pointer-events: none;
   visibility: hidden;
