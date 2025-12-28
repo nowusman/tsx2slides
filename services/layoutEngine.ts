@@ -7,6 +7,7 @@
 
 import React from 'react';
 import * as ReactDOM from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import * as ts from 'typescript';
 import { DocumentLayout, ExportFormat, LayoutElement, PageLayout } from '../types';
 import { walkDom, validateElements, LayoutItem, ShapeElement } from './domWalker';
@@ -18,6 +19,11 @@ import { rgbToHex } from './colorUtils';
 const CONTAINER_WIDTH = 1280;
 const CONTAINER_HEIGHT = 720;
 
+const transpileCache = new Map<string, string>();
+const runnerCache = new Map<string, Function>();
+const MAX_TRANSPILE_CACHE = 8;
+const MAX_RUNNER_CACHE = 8;
+
 export interface ParseRequest {
   content: string;
   format: ExportFormat;
@@ -25,6 +31,78 @@ export interface ParseRequest {
   forceSinglePage?: boolean;
   maxPages?: number;
 }
+
+const hashString = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16);
+};
+
+const waitForNextFrame = () => new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+
+const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = window.setTimeout(() => resolve(fallback), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) window.clearTimeout(timer);
+  }
+};
+
+const waitForFonts = async (timeoutMs: number) => {
+  const fonts = (document as any).fonts as FontFaceSet | undefined;
+  if (!fonts?.ready) return;
+  await withTimeout(fonts.ready as Promise<any>, timeoutMs, undefined);
+};
+
+const waitForImages = async (container: HTMLElement, timeoutMs: number) => {
+  const imgs = Array.from(container.querySelectorAll('img'));
+  if (imgs.length === 0) return;
+
+  const tasks = imgs.map(async (img) => {
+    if (img.complete && img.naturalWidth > 0) return;
+    if (typeof (img as any).decode === 'function') {
+      try {
+        await (img as any).decode();
+        return;
+      } catch {
+      }
+    }
+    await new Promise<void>((resolve) => {
+      const cleanup = () => {
+        img.removeEventListener('load', onLoad);
+        img.removeEventListener('error', onError);
+      };
+      const onLoad = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        resolve();
+      };
+      img.addEventListener('load', onLoad, { once: true });
+      img.addEventListener('error', onError, { once: true });
+    });
+  });
+
+  await withTimeout(Promise.all(tasks).then(() => undefined), timeoutMs, undefined);
+};
+
+const settleLayout = async (container: HTMLElement) => {
+  await waitForNextFrame();
+  await waitForFonts(1200);
+  await waitForImages(container, 1400);
+  await waitForNextFrame();
+};
 
 /**
  * Main entry point: parses TSX content and returns a document layout
@@ -53,12 +131,18 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
   });
 
   // Transpile TSX to JavaScript
-  const transpiled = transpileTsx(content, sourceName);
+  const transpileKey = `${sourceName || 'inline'}:${hashString(content)}`;
+  if (transpileCache.size > MAX_TRANSPILE_CACHE) transpileCache.clear();
+  const transpiled = transpileCache.get(transpileKey) ?? transpileTsx(content, sourceName);
+  transpileCache.set(transpileKey, transpiled);
 
   // Create module scope for execution
   const module: { exports: Record<string, any> } = { exports: {} };
   const require = createRequire();
-  const runner = new Function('require', 'module', 'exports', 'React', 'ReactDOM', transpiled);
+  const runnerKey = hashString(transpiled);
+  if (runnerCache.size > MAX_RUNNER_CACHE) runnerCache.clear();
+  const runner = runnerCache.get(runnerKey) ?? new Function('require', 'module', 'exports', 'React', 'ReactDOM', transpiled);
+  runnerCache.set(runnerKey, runner);
 
   try {
     runner(require, module, module.exports, React, ReactDOM);
@@ -77,33 +161,26 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
   const root = ReactDOM.createRoot(container);
 
   try {
-    root.render(React.createElement(Component));
+    flushSync(() => {
+      root.render(React.createElement(Component));
+    });
   } catch (err: any) {
     root.unmount();
     throw new Error(`Render failed: ${err?.message || err}`);
   }
 
-  // Wait for layout to settle
-  return new Promise((resolve, reject) => {
-    window.requestAnimationFrame(() => {
-      // Give layout time to settle for fonts/images
-      setTimeout(async () => {
-        try {
-          const layout = await extractLayoutEnhanced(
-            container,
-            format,
-            sourceName || 'TSX Capture',
-            { forceSinglePage, maxPages }
-          );
-          root.unmount();
-          resolve(layout);
-        } catch (err) {
-          root.unmount();
-          reject(err);
-        }
-      }, 150);  // Slightly longer timeout for image loading
-    });
-  });
+  try {
+    await settleLayout(container);
+    const layout = await extractLayoutEnhanced(
+      container,
+      format,
+      sourceName || 'TSX Capture',
+      { forceSinglePage, maxPages }
+    );
+    return layout;
+  } finally {
+    root.unmount();
+  }
 };
 
 /**
@@ -246,20 +323,23 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
   const sanitizedContent = sanitizeCommonJsxText(content);
 
   for (const fileName of candidates) {
+    const compilerOptions: ts.CompilerOptions = {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.CommonJS,
+      moduleResolution: ts.ModuleResolutionKind.Node10,
+      jsx: ts.JsxEmit.React,
+      isolatedModules: true,
+      allowJs: true,
+      allowImportingTsExtensions: true,
+      experimentalDecorators: true,
+      useDefineForClassFields: false,
+      esModuleInterop: true,
+      allowSyntheticDefaultImports: true,
+    };
+
     const result = ts.transpileModule(content, {
       compilerOptions: {
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.CommonJS,
-        // Use a CJS-friendly resolver; "bundler" requires ESM modules and was tripping TSX parsing
-        moduleResolution: ts.ModuleResolutionKind.Node10,
-        jsx: ts.JsxEmit.React,
-        isolatedModules: true,
-        allowJs: true,
-        allowImportingTsExtensions: true,
-        experimentalDecorators: true,
-        useDefineForClassFields: false,
-        esModuleInterop: true,
-        allowSyntheticDefaultImports: true,
+        ...compilerOptions,
       },
       fileName,
       reportDiagnostics: true,
@@ -270,17 +350,7 @@ const transpileTsx = (content: string, sourceName?: string | null) => {
       result.diagnostics && result.diagnostics.length > 0 && sanitizedContent !== content
         ? ts.transpileModule(sanitizedContent, {
           compilerOptions: {
-            target: ts.ScriptTarget.ES2022,
-            module: ts.ModuleKind.CommonJS,
-            moduleResolution: ts.ModuleResolutionKind.Node10,
-            jsx: ts.JsxEmit.ReactJSX,
-            isolatedModules: true,
-            allowJs: true,
-            allowImportingTsExtensions: true,
-            experimentalDecorators: true,
-            useDefineForClassFields: false,
-            esModuleInterop: true,
-            allowSyntheticDefaultImports: true,
+            ...compilerOptions,
           },
           fileName,
           reportDiagnostics: true,

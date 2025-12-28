@@ -107,31 +107,39 @@ const getTextNodes = (element: HTMLElement, context: TextWrapperContext): Node[]
 /**
  * Extracts text for a specific DOMRect from a text node
  */
-const getTextForRect = (textNode: Node, rect: DOMRect, fullText: string): string => {
+const isWhitespace = (char: string) => /\s/.test(char);
+
+const getRangeRectsCount = (textNode: Node, start: number, end: number) => {
     const range = document.createRange();
-    const text = textNode.textContent || '';
+    range.setStart(textNode, start);
+    range.setEnd(textNode, end);
+    return range.getClientRects().length;
+};
 
-    // Try to find the specific text that corresponds to this rect
-    for (let i = 0; i < text.length; i++) {
-        range.setStart(textNode, i);
+const getRangeBoundingRect = (textNode: Node, start: number, end: number) => {
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, end);
+    return range.getBoundingClientRect();
+};
 
-        for (let j = i + 1; j <= text.length; j++) {
-            range.setEnd(textNode, j);
-            const rangeRects = range.getClientRects();
+const findLineEndOffset = (textNode: Node, startOffset: number, textLength: number) => {
+    let low = startOffset + 1;
+    let high = textLength;
+    let best = low;
 
-            for (const rangeRect of rangeRects) {
-                // Check if this range rect matches our target rect
-                if (Math.abs(rangeRect.top - rect.top) < 2 &&
-                    Math.abs(rangeRect.left - rect.left) < 2 &&
-                    Math.abs(rangeRect.width - rect.width) < 2) {
-                    return text.substring(i, j);
-                }
-            }
+    while (low <= high) {
+        const mid = (low + high) >> 1;
+        const rectCount = getRangeRectsCount(textNode, startOffset, mid);
+        if (rectCount <= 1) {
+            best = mid;
+            low = mid + 1;
+        } else {
+            high = mid - 1;
         }
     }
 
-    // Fallback: return full text
-    return fullText;
+    return best;
 };
 
 /**
@@ -162,43 +170,60 @@ export const extractTextLines = (
     let maxWidth = 0;
 
     for (const textNode of textNodes) {
-        const range = document.createRange();
-        range.selectNodeContents(textNode);
+        const fullText = textNode.textContent || '';
+        const textLength = fullText.length;
+        if (!fullText.trim()) continue;
 
-        const rects = Array.from(range.getClientRects());
+        let offset = 0;
+        let guard = 0;
 
-        for (const rect of rects) {
-            // Skip very small rects (likely whitespace)
-            if (rect.width < 1 || rect.height < 1) continue;
+        while (offset < textLength) {
+            guard += 1;
+            if (guard > textLength + 16) break;
 
-            // Create position key to avoid duplicates
+            while (offset < textLength && isWhitespace(fullText[offset])) offset += 1;
+            if (offset >= textLength) break;
+
+            const lineEnd = findLineEndOffset(textNode, offset, textLength);
+            if (lineEnd <= offset) {
+                offset += 1;
+                continue;
+            }
+
+            const rect = getRangeBoundingRect(textNode, offset, lineEnd);
+            if (rect.width < 1 || rect.height < 1) {
+                offset = lineEnd;
+                continue;
+            }
+
             const relX = rect.left - containerRect.left;
             const relY = rect.top - containerRect.top;
             const posKey = `${Math.round(relX)},${Math.round(relY)},${Math.round(rect.width)},${Math.round(rect.height)}`;
-            if (context.processedPositions.has(posKey)) continue;
-            context.processedPositions.add(posKey);
+            if (!context.processedPositions.has(posKey)) {
+                context.processedPositions.add(posKey);
 
-            // Get the text content for this specific line
-            const lineText = getTextForRect(textNode, rect, textNode.textContent || '').trim();
-            if (!lineText) continue;
+                const lineText = fullText.slice(offset, lineEnd).trim();
+                if (lineText) {
+                    const position = calculateRectPosition(rect, context.containerInfo);
 
-            // Calculate position relative to container
-            const position = calculateRectPosition(rect, context.containerInfo);
+                    lines.push({
+                        id: generateLineId(context),
+                        text: lineText,
+                        position,
+                        fontSize,
+                        fontFamily,
+                        fontWeight,
+                        color,
+                        align,
+                        lineIndex: lineIndex++,
+                    });
 
-            lines.push({
-                id: generateLineId(context),
-                text: lineText,
-                position,
-                fontSize,
-                fontFamily,
-                fontWeight,
-                color,
-                align,
-                lineIndex: lineIndex++,
-            });
+                    totalHeight = Math.max(totalHeight, position.y + position.height);
+                    maxWidth = Math.max(maxWidth, position.x + position.width);
+                }
+            }
 
-            totalHeight = Math.max(totalHeight, position.y + position.height);
-            maxWidth = Math.max(maxWidth, position.x + position.width);
+            offset = lineEnd;
         }
     }
 

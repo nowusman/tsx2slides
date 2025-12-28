@@ -21,7 +21,7 @@ export interface ExtractedImage {
 interface ImageExtractionContext {
     containerInfo: ContainerInfo;
     idCounter: number;
-    extractedUrls: Set<string>;  // Track processed image URLs
+    imageDataCache: Map<string, Promise<{ dataUrl: string; naturalWidth: number; naturalHeight: number }>>;
 }
 
 /**
@@ -32,7 +32,7 @@ export const createImageExtractionContext = (
 ): ImageExtractionContext => ({
     containerInfo,
     idCounter: 0,
-    extractedUrls: new Set<string>(),
+    imageDataCache: new Map(),
 });
 
 /**
@@ -58,6 +58,21 @@ const detectImageFormat = (src: string): 'png' | 'jpeg' | 'gif' | 'webp' => {
         return 'webp';
     }
     return 'png';  // Default to PNG
+};
+
+const getCachedImageData = (
+    context: ImageExtractionContext,
+    key: string,
+    loader: () => Promise<{ dataUrl: string; naturalWidth: number; naturalHeight: number }>
+) => {
+    if (context.imageDataCache.size > 32) {
+        context.imageDataCache.clear();
+    }
+    const existing = context.imageDataCache.get(key);
+    if (existing) return existing;
+    const created = loader();
+    context.imageDataCache.set(key, created);
+    return created;
 };
 
 /**
@@ -104,6 +119,40 @@ const imageToBase64 = (img: HTMLImageElement): Promise<string> => {
     });
 };
 
+const loadUrlToBase64Png = (url: string): Promise<{ dataUrl: string; naturalWidth: number; naturalHeight: number }> => {
+    return new Promise((resolve, reject) => {
+        if (url.startsWith('data:')) {
+            resolve({ dataUrl: url, naturalWidth: 0, naturalHeight: 0 });
+            return;
+        }
+
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = async () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth || 1;
+                canvas.height = img.naturalHeight || 1;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    reject(new Error('Could not get canvas context'));
+                    return;
+                }
+                ctx.drawImage(img, 0, 0);
+                resolve({
+                    dataUrl: canvas.toDataURL('image/png'),
+                    naturalWidth: img.naturalWidth,
+                    naturalHeight: img.naturalHeight,
+                });
+            } catch (err) {
+                reject(err);
+            }
+        };
+        img.onerror = () => reject(new Error(`Failed to load image: ${url}`));
+        img.src = url;
+    });
+};
+
 /**
  * Extracts an <img> element as ExtractedImage
  */
@@ -129,17 +178,25 @@ export const extractImgElement = async (
     if (position.width < 1 || position.height < 1) return null;
 
     try {
-        const base64 = await imageToBase64(img);
+        const srcKey = img.currentSrc || img.src;
+        const cached = await getCachedImageData(context, `img:${srcKey}`, async () => {
+            const dataUrl = await imageToBase64(img);
+            return {
+                dataUrl,
+                naturalWidth: img.naturalWidth || img.width,
+                naturalHeight: img.naturalHeight || img.height,
+            };
+        });
 
         return {
             id: generateId(context),
             type: 'image',
-            src: base64,
+            src: cached.dataUrl,
             position,
             format: detectImageFormat(img.src),
             zIndex,
-            naturalWidth: img.naturalWidth || img.width,
-            naturalHeight: img.naturalHeight || img.height,
+            naturalWidth: cached.naturalWidth || img.naturalWidth || img.width,
+            naturalHeight: cached.naturalHeight || img.naturalHeight || img.height,
         };
     } catch (err) {
         console.warn('Failed to extract image:', err);
@@ -167,55 +224,26 @@ export const extractBackgroundImage = async (
 
     const url = urlMatch[1];
 
-    // Skip if already extracted
-    if (context.extractedUrls.has(url)) return null;
-    context.extractedUrls.add(url);
+    try {
+        const cached = await getCachedImageData(context, `bg:${url}`, () => loadUrlToBase64Png(url));
+        const position = calculatePrecisePosition(element, context.containerInfo);
 
-    // Create an image to load the background
-    return new Promise((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
+        if (position.width < 1 || position.height < 1) return null;
 
-        img.onload = async () => {
-            const position = calculatePrecisePosition(element, context.containerInfo);
-
-            try {
-                const canvas = document.createElement('canvas');
-                canvas.width = img.naturalWidth;
-                canvas.height = img.naturalHeight;
-
-                const ctx = canvas.getContext('2d');
-                if (!ctx) {
-                    resolve(null);
-                    return;
-                }
-
-                ctx.drawImage(img, 0, 0);
-                const base64 = canvas.toDataURL('image/png');
-
-                resolve({
-                    id: generateId(context),
-                    type: 'image',
-                    src: base64,
-                    position,
-                    format: detectImageFormat(url),
-                    zIndex,
-                    naturalWidth: img.naturalWidth,
-                    naturalHeight: img.naturalHeight,
-                });
-            } catch (err) {
-                console.warn('Failed to extract background image:', err);
-                resolve(null);
-            }
+        return {
+            id: generateId(context),
+            type: 'image',
+            src: cached.dataUrl,
+            position,
+            format: detectImageFormat(url),
+            zIndex,
+            naturalWidth: cached.naturalWidth || position.width,
+            naturalHeight: cached.naturalHeight || position.height,
         };
-
-        img.onerror = () => {
-            console.warn('Failed to load background image:', url);
-            resolve(null);
-        };
-
-        img.src = url;
-    });
+    } catch (err) {
+        console.warn('Failed to extract background image:', err);
+        return null;
+    }
 };
 
 /**
@@ -224,15 +252,20 @@ export const extractBackgroundImage = async (
 export const extractAllImages = async (
     container: HTMLElement,
     context: ImageExtractionContext,
-    paintOrder: HTMLElement[]
+    paintOrder: HTMLElement[],
+    styleCache?: Map<HTMLElement, CSSStyleDeclaration>
 ): Promise<ExtractedImage[]> => {
     const images: ExtractedImage[] = [];
+    const paintIndex = new Map<HTMLElement, number>();
+    for (let i = 0; i < paintOrder.length; i++) {
+        paintIndex.set(paintOrder[i], i);
+    }
 
     // Find all <img> elements
     const imgElements = container.querySelectorAll('img');
 
     for (const img of imgElements) {
-        const zIndex = paintOrder.indexOf(img.parentElement || img as any);
+        const zIndex = paintIndex.get(img as any) ?? paintIndex.get(img.parentElement as any) ?? 0;
         const extracted = await extractImgElement(img, context, zIndex);
         if (extracted) {
             images.push(extracted);
@@ -242,7 +275,7 @@ export const extractAllImages = async (
     // Find elements with background images
     for (let i = 0; i < paintOrder.length; i++) {
         const element = paintOrder[i];
-        const styles = window.getComputedStyle(element);
+        const styles = styleCache?.get(element) ?? window.getComputedStyle(element);
         const extracted = await extractBackgroundImage(element, styles, context, i);
         if (extracted) {
             images.push(extracted);

@@ -211,15 +211,19 @@ export const extractTextFromElement = (
 export const extractTextLines = (
     element: HTMLElement,
     context: TextExtractionContext,
-    zIndex: number
+    zIndex: number,
+    styles?: CSSStyleDeclaration
 ): TextElement[] => {
     const results: TextElement[] = [];
-    const styles = window.getComputedStyle(element);
+    const resolvedStyles = styles ?? window.getComputedStyle(element);
 
     // Skip invisible elements
-    if (styles.display === 'none' || styles.visibility === 'hidden') {
+    if (resolvedStyles.display === 'none' || resolvedStyles.visibility === 'hidden') {
         return results;
     }
+
+    const opacity = parseFloat(resolvedStyles.opacity);
+    if (opacity === 0) return results;
 
     // Extract text lines with precise rects and deduplication
     const multiline = extractMultilineText(element, context.wrapperContext, zIndex);

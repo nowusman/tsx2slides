@@ -48,6 +48,9 @@ const QUALITY_PRESETS: Record<'draft' | 'standard' | 'high', QualityPreset> = {
   high: { imageScale: 1, imageQuality: 1, compression: 'SLOW', precision: 16, compressPdf: false },
 };
 
+const preparedImageCache = new Map<string, Promise<{ data: string; format: 'PNG' | 'JPEG' }>>();
+const MAX_PREPARED_IMAGE_CACHE = 24;
+
 /**
  * Converts hex color to RGB object
  */
@@ -71,6 +74,9 @@ const detectFormat = (dataUrl?: string): 'PNG' | 'JPEG' => {
   return 'PNG';
 };
 
+const getPresetKey = (preset: QualityPreset) =>
+  `${preset.imageScale}|${preset.imageQuality}|${preset.compression}`;
+
 /**
  * Downscales or recompresses an image data URL based on quality presets
  */
@@ -78,34 +84,49 @@ const prepareImageForQuality = async (
   dataUrl: string,
   preset: QualityPreset
 ): Promise<{ data: string; format: 'PNG' | 'JPEG' }> => {
-  if (preset.imageScale === 1 && preset.imageQuality === 1) {
-    return { data: dataUrl, format: detectFormat(dataUrl) };
+  if (preparedImageCache.size > MAX_PREPARED_IMAGE_CACHE) {
+    preparedImageCache.clear();
   }
+  const cacheKey = `${getPresetKey(preset)}|${dataUrl}`;
+  const existing = preparedImageCache.get(cacheKey);
+  if (existing) return existing;
 
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const width = Math.max(1, Math.round(img.naturalWidth * preset.imageScale));
-      const height = Math.max(1, Math.round(img.naturalHeight * preset.imageScale));
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        resolve({ data: dataUrl, format: detectFormat(dataUrl) });
-        return;
-      }
-      ctx.drawImage(img, 0, 0, width, height);
-      const format: 'PNG' | 'JPEG' = preset.compression === 'SLOW' ? detectFormat(dataUrl) : 'JPEG';
-      const encoded = canvas.toDataURL(
-        format === 'JPEG' ? 'image/jpeg' : 'image/png',
-        preset.imageQuality
-      );
-      resolve({ data: encoded, format });
-    };
-    img.onerror = () => resolve({ data: dataUrl, format: detectFormat(dataUrl) });
-    img.src = dataUrl;
-  });
+  const task: Promise<{ data: string; format: 'PNG' | 'JPEG' }> = (async (): Promise<{
+    data: string;
+    format: 'PNG' | 'JPEG';
+  }> => {
+    if (preset.imageScale === 1 && preset.imageQuality === 1) {
+      return { data: dataUrl, format: detectFormat(dataUrl) };
+    }
+
+    return new Promise<{ data: string; format: 'PNG' | 'JPEG' }>((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const width = Math.max(1, Math.round(img.naturalWidth * preset.imageScale));
+        const height = Math.max(1, Math.round(img.naturalHeight * preset.imageScale));
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve({ data: dataUrl, format: detectFormat(dataUrl) });
+          return;
+        }
+        ctx.drawImage(img, 0, 0, width, height);
+        const format: 'PNG' | 'JPEG' = preset.compression === 'SLOW' ? detectFormat(dataUrl) : 'JPEG';
+        const encoded = canvas.toDataURL(
+          format === 'JPEG' ? 'image/jpeg' : 'image/png',
+          preset.imageQuality
+        );
+        resolve({ data: encoded, format });
+      };
+      img.onerror = () => resolve({ data: dataUrl, format: detectFormat(dataUrl) });
+      img.src = dataUrl;
+    });
+  })();
+
+  preparedImageCache.set(cacheKey, task);
+  return task;
 };
 
 /**
@@ -245,11 +266,11 @@ const renderPdfShape = (
     doc.setLineWidth(strokeWidth);
 
     if (el.borderStyle === 'dashed') {
-      doc.setLineDash([2, 2]);
+      (doc as any).setLineDash([2, 2]);
     } else if (el.borderStyle === 'dotted') {
-      doc.setLineDash([0.8, 1.6]);
+      (doc as any).setLineDash([0.8, 1.6]);
     } else {
-      doc.setLineDash([]);
+      (doc as any).setLineDash([]);
     }
   }
 
@@ -269,7 +290,7 @@ const renderPdfShape = (
 
   // Reset dash pattern to avoid leaking into subsequent shapes
   if (hasStroke) {
-    doc.setLineDash([]);
+    (doc as any).setLineDash([]);
   }
 };
 

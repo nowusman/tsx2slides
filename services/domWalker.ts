@@ -68,9 +68,10 @@ const extractShape = (
         bgColorOverride?: string;
         border?: BorderInfo | null;
         shadow?: ShadowInfo | null;
+        position?: PreciseRect;
     }
 ): ShapeElement | null => {
-    const position = calculatePrecisePosition(element, containerInfo);
+    const position = options?.position ?? calculatePrecisePosition(element, containerInfo);
 
     // Skip if too small
     if (position.width < 1 || position.height < 1) return null;
@@ -135,6 +136,7 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
 
     const elements: LayoutItem[] = [];
     const idCounter = { value: 0 };
+    const styleCache = new Map<HTMLElement, CSSStyleDeclaration>();
 
     // Process elements in paint order (bottom to top)
     for (let i = 0; i < paintOrder.length; i++) {
@@ -144,6 +146,7 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
         if (element === container) continue;
 
         const styles = window.getComputedStyle(element);
+        styleCache.set(element, styles);
 
         // Skip invisible elements
         if (styles.display === 'none' || styles.visibility === 'hidden') continue;
@@ -152,12 +155,14 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
         const border = extractBorder(styles);
         const shadow = extractShadow(styles);
         const gradientInfo = handleGradient(element, styles, true);
+        const position = calculatePrecisePosition(element, containerInfo);
 
         // Extract shape (background, border)
         const shape = extractShape(element, styles, containerInfo, i, idCounter, {
             bgColorOverride: gradientInfo?.dominantColor,
             border,
             shadow,
+            position,
         });
         if (shape) {
             elements.push(shape);
@@ -165,7 +170,6 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
 
         // If the element has a gradient background and we rendered an image, capture it
         if (gradientInfo && gradientInfo.type === 'image' && gradientInfo.value) {
-            const position = calculatePrecisePosition(element, containerInfo);
             if (position.width >= 1 && position.height >= 1) {
                 elements.push({
                     id: `img-${++idCounter.value}`,
@@ -181,7 +185,7 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
         }
 
         // Extract text
-        const textElements = extractTextLines(element, textContext, i);
+        const textElements = extractTextLines(element, textContext, i, styles);
         elements.push(...textElements);
 
         // Extract SVG if this is an SVG element
@@ -194,7 +198,7 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
     }
 
     // Extract images (including background images)
-    const images = await extractAllImages(container, imageContext, paintOrder);
+    const images = await extractAllImages(container, imageContext, paintOrder, styleCache);
     elements.push(...images);
 
     // Sort by z-index to maintain proper layering
