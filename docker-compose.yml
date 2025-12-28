@@ -1,0 +1,9 @@
+version: '3.8'
+
+services:
+  tsx2slides:
+    build: .
+    container_name: tsx2slides
+    ports:
+      - "8080:80"
+    restart: unless-stopped

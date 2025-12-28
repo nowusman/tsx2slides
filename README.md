@@ -1,11 +1,13 @@
 <div align="center">
   <h1>TSX2Slides</h1>
-  <p><strong>Convert TSX/JSX Components to PDF or PPTX Presentations</strong></p>
+  <h3>Enterprise-Grade React Component to Presentation Converter</h3>
+  <p><strong>Transform your React UI into professional PDF and PowerPoint presentations instantly.</strong></p>
 
   [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
   [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
   [![React](https://img.shields.io/badge/React-19.2-61dafb.svg)](https://reactjs.org/)
   [![Vite](https://img.shields.io/badge/Vite-6.2-646cff.svg)](https://vitejs.dev/)
+  [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
 
 </div>
 
@@ -13,583 +15,212 @@
 
 ## 📖 Table of Contents
 
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Configuration](#configuration)
-- [Technology Stack](#technology-stack)
-- [Project Structure](#project-structure)
-- [Contributing](#contributing)
-- [Security](#security)
-- [License](#license)
-- [Support](#support)
+- [Overview](#-overview)
+- [Key Features](#-key-features)
+- [Architecture](#-architecture)
+- [Prerequisites](#-prerequisites)
+- [Installation & Local Development](#-installation--local-development)
+  - [Windows Setup](#windows-setup)
+- [Deployment](#-deployment)
+  - [Docker](#docker-deployment)
+- [Usage Guide](#-usage-guide)
+- [Project Structure](#-project-structure)
+- [Technical Capabilities](#-technical-capabilities)
+- [License](#-license)
 
 ---
 
 ## 🎯 Overview
 
-**TSX2Slides** is a powerful, privacy-focused web application that converts React TSX/JSX components into professional PDF or PowerPoint presentations. Built with enterprise-grade standards, it operates entirely offline within your browser, ensuring complete data privacy and security.
+**TSX2Slides** is a high-performance, privacy-centric application designed for enterprise environments. It allows developers and designers to convert React TSX/JSX components into pixel-perfect PDF documents and editable PowerPoint (PPTX) presentations.
 
-The application leverages in-browser TypeScript transpilation to render React components and accurately extract their visual layout into presentation formats without any external dependencies or cloud services.
+Unlike traditional screenshot-based tools, TSX2Slides performs a deep DOM analysis to map HTML/CSS structures directly to presentation primitives. This ensures text remains selectable, vector graphics stay sharp, and layouts are preserved with high fidelity.
 
-### Key Benefits
-
-- **🔒 Privacy First**: All processing happens locally in your browser - no data leaves your machine
-- **⚡ Zero Dependencies**: No external APIs, CDNs, or cloud services required
-- **🎨 Accurate Rendering**: Preserves exact component layouts, styles, and visual hierarchy
-- **📦 Portable**: Works offline after initial load - perfect for secure environments
-- **🚀 Fast**: Instant transpilation and export with no network latency
+**Why TSX2Slides?**
+- **🔒 Zero Data Leakage**: All processing is performed client-side within the browser. No code or data is ever sent to a server.
+- **⚡ Offline Capable**: Fully functional without an internet connection after initial load.
+- **🎨 Design System Compatible**: Reuse your existing React component library for presentations.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
 ### Core Capabilities
+- **Dual-Format Export**: Generate A4 Landscape PDFs and 16:9 PowerPoint presentations simultaneously.
+- **Live Preview**: Real-time rendering of your TSX/JSX code before export.
+- **Drag & Drop Interface**: Seamless file loading experience.
+- **TypeScript Support**: Built-in transpiler supports modern TypeScript syntax out of the box.
 
-- **TSX/JSX Support**: Full support for TypeScript and JavaScript React components
-- **Dual Export Formats**: Generate both PDF (A4 landscape) and PPTX (16:9) presentations
-- **In-Browser Transpilation**: Embedded TypeScript compiler eliminates external dependencies
-- **Visual Fidelity**: Accurate DOM geometry mapping preserves your component's exact appearance
-- **Standard Fonts**: Reliable text rendering without missing glyphs or font issues
-- **Drag & Drop Interface**: Intuitive file upload with visual feedback
-- **Real-time Preview**: See your component render before export
-
-### Technical Features
-
-- React 19.2+ with latest JSX Transform
-- TypeScript 5.8 with strict type checking
-- Vite-powered development with HMR (Hot Module Replacement)
-- Modern ES modules architecture
-- Responsive UI with Lucide icons
-- Zero-config setup
-
-
-
-### Out of Scope (Not Currently Supported)
-
-1. **Animations/Transitions**: Static capture only
-
-2. **Interactive Elements**: Forms, buttons are visual only
-
-3. **External Resources**: No network requests for images/fonts
-
-4. **CSS :hover/:focus**: Only default state captured
-
-5. **Canvas Elements**: Raw canvas content not captured
-
-6. **WebGL/3D**: Not supported
-
-7. **Video/Audio**: Not supported
-   
-   
-
-### Partial Support
-
-1. **Gradients**: Solid color fallback
-
-2. **Shadows**: May not render in all cases
-
-3. **Complex Borders**: Simplified representation
-
-4. **Custom Fonts**: Mapped to standard alternatives
+### Advanced Rendering Engine
+- **Smart Gradient Handling**: Automatically converts complex CSS gradients into high-fidelity images or calculates dominant colors for solid fallbacks, ensuring compatibility with PDF/PPTX standards.
+- **Intelligent Font Mapping**: robust font fallback system that maps web fonts (e.g., Inter, Roboto) to standard system fonts (Arial, Helvetica) to guarantee consistent rendering across different operating systems.
+- **DOM-to-Vector Mapping**: Precise calculation of element positions, dimensions, and styles.
 
 ---
 
 ## 🏗️ Architecture
 
-### System Design
+TSX2Slides utilizes a sophisticated browser-based pipeline to process React components:
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Browser Environment                     │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
-│  │  File Upload │───▶│  TypeScript  │───▶│   React      │  │
-│  │  (TSX/JSX)   │    │  Transpiler  │    │   Renderer   │  │
-│  └──────────────┘    └──────────────┘    └──────────────┘  │
-│                                                   │           │
-│                                                   ▼           │
-│                                          ┌──────────────┐    │
-│                                          │ Hidden Stage │    │
-│                                          │  1280x720    │    │
-│                                          └──────────────┘    │
-│                                                   │           │
-│                              ┌────────────────────┴───────┐  │
-│                              ▼                            ▼  │
-│                     ┌──────────────┐           ┌──────────────┐
-│                     │   jsPDF      │           │  PptxGenJS   │
-│                     │ PDF Generator│           │PPTX Generator│
-│                     └──────────────┘           └──────────────┘
-│                              │                            │  │
-│                              └────────────────────────────┘  │
-│                                          ▼                    │
-│                                   ┌──────────────┐           │
-│                                   │   Download   │           │
-│                                   └──────────────┘           │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph LR
+    A[User Upload] --> B[TS Transpiler]
+    B --> C[React Renderer]
+    C --> D[Hidden Viewport]
+    D --> E[DOM Analyzer]
+    E --> F{Export Engine}
+    F --> G[jsPDF Gen]
+    F --> H[PptxGenJS Gen]
+    G --> I[Download]
+    H --> I
 ```
 
-### Processing Pipeline
-
-1. **File Upload**: User uploads TSX/JSX component file
-2. **Transpilation**: TypeScript compiler converts TSX to executable JavaScript
-3. **Rendering**: Component renders in a hidden 1280×720 canvas
-4. **Layout Extraction**: DOM geometry is analyzed and mapped
-5. **Export Generation**: Layout is converted to PDF or PPTX format
-6. **Download**: Final document is delivered to the user
+1.  **Ingestion**: TSX code is transpiled in-memory using a lightweight TypeScript compiler.
+2.  **Rendering**: The component is mounted in a sandboxed, hidden container (1280x720).
+3.  **Analysis**: The `DomWalker` service traverses the visual tree, extracting computed styles, geometry, and text content.
+4.  **Synthesis**: The extracted data is mapped to `jsPDF` and `PptxGenJS` primitives for document generation.
 
 ---
 
 ## 📋 Prerequisites
 
-Before installing TSX2Slides, ensure your system meets these requirements:
-
-### System Requirements
-
-- **Node.js**: v18.x or higher (v20.x LTS recommended)
-- **npm**: v9.x or higher (comes with Node.js)
-- **Operating System**: Windows, macOS, or Linux
-- **Memory**: Minimum 2GB RAM available
-- **Browser**: Modern browser (Chrome 90+, Firefox 88+, Safari 14+, Edge 90+)
-
-### Development Tools (Optional)
-
-- **Git**: For version control
-- **VS Code**: Recommended IDE with TypeScript support
-- **Node Version Manager** (nvm): For managing Node.js versions
-
-### Verify Prerequisites
-
-```bash
-# Check Node.js version
-node --version  # Should show v18.x or higher
-
-# Check npm version
-npm --version   # Should show v9.x or higher
-
-# Check Git (optional)
-git --version
-```
+- **Node.js**: v18.x or higher (v20 LTS recommended)
+- **npm**: v9.x or higher
+- **Docker** (Optional): For containerized deployment
 
 ---
 
-## 🚀 Installation
+## 🚀 Installation & Local Development
 
-### Quick Start
+### Standard Setup
+
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/nowusman/tsx2slides.git
+    cd tsx2slides
+    ```
+
+2.  **Install dependencies**
+    ```bash
+    npm install
+    ```
+
+3.  **Start the development server**
+    ```bash
+    npm run dev
+    ```
+    Access the app at `http://localhost:5173`.
+
+### Windows Setup
+
+For users on Windows, we recommend using PowerShell.
+
+1.  **Open PowerShell as Administrator** (optional, but recommended for avoiding permission issues).
+2.  **Execution Policy**: Ensure you can run scripts if you encounter errors.
+    ```powershell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+    ```
+3.  **Run the App**:
+    ```powershell
+    npm run dev
+    ```
+
+---
+
+## 📦 Deployment
+
+TSX2Slides is designed to be deployed as a static web application. We provide official Docker support for easy containerization.
+
+### Docker Deployment
+
+1.  **Build the Docker Image**
+    ```bash
+    docker build -t tsx2slides .
+    ```
+
+2.  **Run the Container**
+    ```bash
+    docker run -d -p 8080:80 --name tsx2slides-app tsx2slides
+    ```
+    The application will be available at `http://localhost:8080`.
+
+### Using Docker Compose
+
+For convenience, a `docker-compose.yml` is included.
 
 ```bash
-# Clone the repository
-git clone https://github.com/nowusman/tsx2slides.git
-
-# Navigate to project directory
-cd tsx2slides
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+docker-compose up -d --build
 ```
 
-The application will be available at `http://localhost:5173` (or another port if 5173 is in use).
+### Static Hosting
 
-### Installation Steps (Detailed)
-
-#### 1. Clone the Repository
+You can also deploy to any static hosting provider (Vercel, Netlify, AWS S3, etc.) by building the project:
 
 ```bash
-# Using HTTPS
-git clone https://github.com/nowusman/tsx2slides.git
-
-# OR using SSH
-git clone git@github.com:nowusman/tsx2slides.git
-
-# Navigate to the project
-cd tsx2slides
-```
-
-#### 2. Install Dependencies
-
-```bash
-# Install all required packages
-npm install
-
-# This will install:
-# - Production dependencies (React, TypeScript, jsPDF, PptxGenJS, etc.)
-# - Development dependencies (Vite, type definitions, etc.)
-```
-
-#### 3. Verify Installation
-
-```bash
-# Check if all dependencies are installed correctly
-npm list --depth=0
-
-# Run a build test
 npm run build
+# The 'dist' folder contains the production-ready static files.
 ```
-
-#### 4. Start Development Server
-
-```bash
-# Start the Vite development server
-npm run dev
-
-# Expected output:
-# VITE v6.2.0  ready in XXX ms
-# ➜  Local:   http://localhost:5173/
-# ➜  Network: use --host to expose
-```
-
-### Alternative Installation Methods
-
-#### Using Yarn
-
-```bash
-# Install Yarn globally (if not already installed)
-npm install -g yarn
-
-# Install dependencies
-yarn install
-
-# Start development server
-yarn dev
-```
-
-#### Using pnpm
-
-```bash
-# Install pnpm globally (if not already installed)
-npm install -g pnpm
-
-# Install dependencies
-pnpm install
-
-# Start development server
-pnpm dev
-```
-
-### Docker Installation (Optional)
-
-```bash
-# Build Docker image
-docker build -t tsx2slides .
-
-# Run container
-docker run -p 5173:5173 tsx2slides
-```
-
-*Note: A Dockerfile is not currently included but can be added if needed for containerized deployments.*
 
 ---
 
-## 💻 Usage
+## 📖 Usage Guide
 
-### Basic Workflow
-
-1. **Start the Application**
-   
-   ```bash
-   npm run dev
-   ```
-
-2. **Open in Browser**
-   
-   - Navigate to `http://localhost:5173`
-
-3. **Upload Component**
-   
-   - Drag and drop your `.tsx` or `.jsx` file into the upload area
-   - Or click to browse and select a file
-
-4. **Select Export Format**
-   
-   - Choose **PDF** for A4 landscape document
-   - Choose **PPTX** for PowerPoint 16:9 presentation
-
-5. **Export**
-   
-   - Click the export button
-   - Your file will download automatically
-
-### Example Component
-
-Create a simple TSX component to test:
-
-```tsx
-// example.tsx
-import React from 'react';
-
-export default function Slide() {
-  return (
-    <div style={{
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: '#1e293b',
-      color: '#ffffff',
-      padding: '2rem'
-    }}>
-      <h1 style={{ fontSize: '3rem', marginBottom: '1rem' }}>
-        Welcome to TSX2Slides
-      </h1>
-      <p style={{ fontSize: '1.5rem', opacity: 0.8 }}>
-        Convert React components to presentations
-      </p>
-    </div>
-  );
-}
-```
-
-### Production Build
-
-```bash
-# Build for production
-npm run build
-
-# Preview production build
-npm run preview
-```
-
-The production build will be created in the `dist/` directory and can be deployed to any static hosting service.
+1.  **Launch the Application**: Open your browser and navigate to the deployed URL (e.g., `http://localhost:5173`).
+2.  **Prepare Your Component**: Ensure your React component is in a `.tsx` file.
+    *   *Tip*: Use standard CSS or inline styles for best results.
+3.  **Upload**: Drag and drop your `.tsx` file into the upload zone, or click to select.
+4.  **Preview & Verify**: The application will render your component. Check the preview to ensure everything looks correct.
+5.  **Export**:
+    *   **PDF**: Click "Export PDF" for a high-quality A4 landscape document.
+    *   **PPTX**: Click "Export PowerPoint" for an editable slide deck.
 
 ---
 
-## ⚙️ Configuration
-
-### Vite Configuration
-
-The project uses Vite for development and building. Configuration is in `vite.config.ts`:
-
-```typescript
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  // Add custom configuration here
-})
-```
-
-### TypeScript Configuration
-
-TypeScript settings are defined in `tsconfig.json`:
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    "strict": true,
-    // ... other options
-  }
-}
-```
-
-### Customization Options
-
-- **Canvas Size**: Modify the render stage dimensions in the service layer
-- **Export Settings**: Adjust PDF/PPTX parameters in the export services
-- **Styling**: Customize UI appearance in `styles.css`
-
----
-
-## 🛠️ Technology Stack
-
-### Frontend Framework
-
-- **React 19.2.3**: Modern UI component library with latest JSX Transform
-- **TypeScript 5.8.2**: Type-safe JavaScript with advanced type features
-
-### Build Tools
-
-- **Vite 6.2.0**: Next-generation frontend build tool with instant HMR
-- **@vitejs/plugin-react 5.0.0**: Official Vite plugin for React support
-
-### Export Libraries
-
-- **jsPDF 3.0.4**: Client-side PDF generation
-- **PptxGenJS 4.0.1**: PowerPoint presentation generation
-
-### UI Components
-
-- **Lucide React 0.562.0**: Beautiful, consistent icon library
-
-### Type Definitions
-
-- **@types/node 22.14.0**: Node.js type definitions for build scripts
-
----
-
-## 📁 Project Structure
+## 📂 Project Structure
 
 ```
 tsx2slides/
-├── .git/                    # Git version control
-├── .gitignore              # Git ignore patterns
-├── components/             # Reusable React components
-├── services/               # Business logic and export services
-├── App.tsx                 # Main application component
-├── index.html              # HTML entry point
-├── index.tsx               # Application entry point
-├── LICENSE                 # MIT license file
-├── metadata.json           # Project metadata
-├── package.json            # Dependencies and scripts
-├── README.md               # This file
-├── styles.css              # Global styles
-├── tsconfig.json           # TypeScript configuration
-├── types.ts                # Shared type definitions
-└── vite.config.ts          # Vite configuration
+├── components/          # UI Components (Layout, Previews, etc.)
+├── services/            # Core Logic Services
+│   ├── generatorService.ts # Main orchestration
+│   ├── domWalker.ts        # DOM traversal & analysis
+│   ├── layoutEngine.ts     # Geometry calculations
+│   ├── gradientHandler.ts  # CSS Gradient processing
+│   └── fontMapper.ts       # Font compatibility layer
+├── tests/               # Sample TSX slides for testing
+├── App.tsx              # Main Application Entry
+├── Dockerfile           # Container configuration
+├── docker-compose.yml   # Docker orchestration
+└── vite.config.ts       # Build configuration
 ```
 
-### Key Directories
+---
 
-- **`components/`**: Modular, reusable UI components
-- **`services/`**: Core business logic for transpilation and export
-- **`App.tsx`**: Main application orchestration
-- **`types.ts`**: Centralized TypeScript type definitions
+## 🛠️ Technical Capabilities
+
+| Feature | Support Level | Implementation Details |
+|---------|---------------|------------------------|
+| **Text** | Full | Accurate font sizing, color, and alignment. |
+| **Images** | Full | Extracts `<img>` tags and background images. |
+| **Gradients** | High | Auto-converts to image or solid fallback. |
+| **Borders** | Medium | Basic border styles supported; complex styles simplified. |
+| **Flexbox/Grid** | Full | Captured via computed layout geometry. |
+| **Animations** | None | Static capture only (first frame/state). |
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions from the community! Here's how you can help:
+We welcome contributions! Please follow these steps:
 
-### Development Process
-
-1. **Fork the Repository**
-   
-   ```bash
-   # Click "Fork" on GitHub, then clone your fork
-   git clone https://github.com/YOUR_USERNAME/tsx2slides.git
-   ```
-
-2. **Create a Feature Branch**
-   
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-3. **Make Your Changes**
-   
-   - Write clean, documented code
-   - Follow existing code style
-   - Add tests if applicable
-
-4. **Commit Your Changes**
-   
-   ```bash
-   git add .
-   git commit -m "feat: add your feature description"
-   ```
-
-5. **Push and Create PR**
-   
-   ```bash
-   git push origin feature/your-feature-name
-   # Then create a Pull Request on GitHub
-   ```
-
-### Coding Standards
-
-- Use TypeScript for all new code
-- Follow React best practices and hooks guidelines
-- Maintain consistent code formatting
-- Write meaningful commit messages (Conventional Commits format)
-- Document complex logic with comments
-
-### Reporting Issues
-
-- Use GitHub Issues to report bugs
-- Include steps to reproduce
-- Provide system information (OS, Node version, browser)
-- Include relevant error messages or screenshots
-
----
-
-## 🔒 Security
-
-### Security Features
-
-- **No External Communication**: All processing is local
-- **No Data Collection**: Zero telemetry or analytics
-- **Content Security**: User content never leaves the browser
-- **Standard Libraries**: Well-maintained, audited dependencies
-
-### Security Best Practices
-
-When using TSX2Slides:
-
-- Keep dependencies updated: `npm audit` and `npm update`
-- Review uploaded component code before processing
-- Use in trusted environments for sensitive data
-- Follow standard web security practices
-
-### Reporting Security Issues
-
-If you discover a security vulnerability, please email: **security@example.com** (or create a private security advisory on GitHub)
-
-**Do not** disclose security issues publicly until they have been addressed.
+1.  Fork the repository.
+2.  Create a feature branch (`git checkout -b feature/amazing-feature`).
+3.  Commit your changes (`git commit -m 'Add some amazing feature'`).
+4.  Push to the branch (`git push origin feature/amazing-feature`).
+5.  Open a Pull Request.
 
 ---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-```
-MIT License
-
-Copyright (c) 2025 M Usman Saleem
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software...
-```
-
----
-
-## 📞 Support
-
-### Getting Help
-
-- **Documentation**: You're reading it! Check all sections above
-- **GitHub Issues**: [Report bugs or request features](https://github.com/nowusman/tsx2slides/issues)
-- **Discussions**: [Community discussions](https://github.com/nowusman/tsx2slides/discussions)
-
-### Useful Resources
-
-- [React Documentation](https://react.dev/)
-- [TypeScript Handbook](https://www.typescriptlang.org/docs/)
-- [Vite Documentation](https://vitejs.dev/)
-- [jsPDF Documentation](https://github.com/parallax/jsPDF)
-- [PptxGenJS Documentation](https://gitbrent.github.io/PptxGenJS/)
-
----
-
-## 🙏 Acknowledgments
-
-Built with ❤️ using:
-
-- React team for the amazing framework
-- TypeScript team for type safety
-- Vite team for blazing fast builds
-- jsPDF and PptxGenJS maintainers
-
----
-
-<div align="center">
-  <p>Made with ❤️ by <a href="https://github.com/nowusman">M Usman Saleem</a></p>
-  <p>⭐ Star this repo if you find it useful!</p>
-</div>
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
