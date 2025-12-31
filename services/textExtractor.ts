@@ -22,6 +22,7 @@ export interface TextElement {
     fontFamily: string;
     align: 'left' | 'center' | 'right';
     lineHeight: number | undefined;
+    isLine?: boolean;
     zIndex: number;
 }
 
@@ -245,6 +246,7 @@ export const extractTextLines = (
             fontFamily: line.fontFamily,
             align: line.align,
             lineHeight: lineMetrics.lineHeight,
+            isLine: true,
             zIndex,
         };
 

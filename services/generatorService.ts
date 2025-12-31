@@ -9,6 +9,7 @@
 import jsPDF from 'jspdf';
 import PptxGenJS from 'pptxgenjs';
 import { DocumentLayout, PageLayout, LayoutElement, ExportOptions } from '../types';
+import { rasterizeAllPages } from './rasterizer';
 import { getJsPDFFont, getPptxFont } from './fontMapper';
 import {
   pxToPointsPDF,
@@ -139,6 +140,28 @@ export const generatePDF = async (
 ) => {
   const quality = options.quality || 'standard';
   const preset = QUALITY_PRESETS[quality];
+
+  if (options.rasterize && layout.snapshot) {
+    const scale = quality === 'high' ? 2 : quality === 'draft' ? 1 : 1.5;
+    const images = await rasterizeAllPages(layout.snapshot, layout.pages.length, scale);
+    const doc = new jsPDF({
+      orientation: 'landscape',
+      unit: 'mm',
+      format: 'a4',
+      compressPdf: preset.compressPdf,
+      precision: preset.precision,
+    } as any);
+
+    images.forEach((dataUrl, index) => {
+      if (index > 0) doc.addPage();
+      doc.addImage(dataUrl, 'PNG', 0, 0, PDF_W, PDF_H, undefined, preset.compression);
+      onProgress?.(Math.min(98, Math.round(((index + 1) / images.length) * 90) + 8), 'Rasterizing PDF pages');
+    });
+
+    doc.save(`${sanitizeFilename(layout.title)}.pdf`);
+    onProgress?.(100, 'PDF saved locally');
+    return;
+  }
 
   const doc = new jsPDF({
     orientation: 'landscape',
@@ -335,9 +358,9 @@ const renderPdfText = (
   if (align === 'center') textX = x + w / 2;
   if (align === 'right') textX = x + w;
 
-  // Split text to fit within width, accounting for padding
+  // Split text to fit within width unless we already captured individual lines
   const effectiveWidth = Math.max(w - 0.5, 1); // Small margin for safety
-  const textLines = doc.splitTextToSize(el.text!, effectiveWidth);
+  const textLines = el.isLine ? [el.text!] : doc.splitTextToSize(el.text!, effectiveWidth);
 
   // Calculate baseline offset using precise conversion
   // Text is positioned at baseline in PDF, so we need to offset from top
@@ -346,7 +369,7 @@ const renderPdfText = (
   // Render text with proper options
   doc.text(textLines, textX, y + baselineOffset, {
     align: align,
-    maxWidth: effectiveWidth,
+    maxWidth: el.isLine ? undefined : effectiveWidth,
     lineHeightFactor: lineHeightFactor,
   });
 };
@@ -365,6 +388,20 @@ export const generatePPTX = async (
 
   const quality = options.quality || 'standard';
   const preset = QUALITY_PRESETS[quality];
+
+  if (options.rasterize && layout.snapshot) {
+    const scale = quality === 'high' ? 2 : quality === 'draft' ? 1 : 1.5;
+    const images = await rasterizeAllPages(layout.snapshot, layout.pages.length, scale);
+    images.forEach((dataUrl, index) => {
+      const slide = pptx.addSlide();
+      slide.addImage({ data: dataUrl, x: 0, y: 0, w: PPTX_W, h: PPTX_H });
+      onProgress?.(Math.min(98, Math.round(((index + 1) / images.length) * 90) + 8), 'Rasterizing PPTX pages');
+    });
+
+    await pptx.writeFile({ fileName: `${sanitizeFilename(layout.title)}.pptx` });
+    onProgress?.(100, 'PPTX ready to download');
+    return;
+  }
   const totalElements = layout.pages.reduce((sum, page) => sum + page.elements.length, 0) || 1;
   let processed = 0;
 
@@ -500,9 +537,9 @@ const renderPptxElement = async (pptx: PptxGenJS, slide: any, el: LayoutElement,
       fontFace,
       align: el.align || 'left',
       valign: 'top',
-      wrap: true,
+      wrap: !el.isLine,
       shrinkText: false,
-      lineSpacing: lineSpacingPt,
+      lineSpacing: el.isLine ? undefined : lineSpacingPt,
       paraSpaceBefore: 0,
       paraSpaceAfter: 0,
     });

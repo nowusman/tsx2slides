@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
+import { unzipSync, strFromU8 } from 'fflate';
 import { Upload, FileType, Play, Loader2, FileText, MonitorPlay, CheckCircle2, ArrowRight, WifiOff, ShieldCheck } from 'lucide-react';
 import { parseTsxToLayout } from './services/layoutEngine';
 import { generatePDF, generatePPTX } from './services/generatorService';
-import { DocumentLayout, ExportFormat, ProgressState, ErrorInfo, ExportOptions } from './types';
+import { DocumentLayout, ExportFormat, ProgressState, ErrorInfo, ExportOptions, ProjectFile, ProjectContext } from './types';
 import { LayoutPreview } from './components/LayoutPreview';
 import { ProgressIndicator } from './components/ProgressIndicator';
 import { ErrorDisplay } from './components/ErrorDisplay';
@@ -19,8 +20,17 @@ function App() {
   const [quality, setQuality] = useState<ExportOptions['quality']>('standard');
   const [isDragging, setIsDragging] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [projectFiles, setProjectFiles] = useState<Record<string, ProjectFile> | null>(null);
+  const [projectEntry, setProjectEntry] = useState<string | null>(null);
+  const [projectCss, setProjectCss] = useState<string>('');
+  const [projectHasCss, setProjectHasCss] = useState(false);
+  const [projectWarnings, setProjectWarnings] = useState<string[]>([]);
+  const [allowRasterFallback, setAllowRasterFallback] = useState(true);
+  const [rasterFallbackUsed, setRasterFallbackUsed] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
   const readyToRender = Boolean(fileName && targetFormat);
   const slideSummary = layout ? `${layout.pages.length} page${layout.pages.length > 1 ? 's' : ''}` : 'No pages yet';
 
@@ -33,6 +43,23 @@ function App() {
     canRetry: true,
   });
 
+  const normalizePath = (value: string) => {
+    const cleaned = value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+    return cleaned ? `/${cleaned}` : '/';
+  };
+
+  const rewriteCssUrls = (css: string, cssPath: string, assets: Record<string, ProjectFile>) => {
+    return css.replace(/url\(([^)]+)\)/g, (full, raw) => {
+      const cleaned = raw.trim().replace(/^['"]|['"]$/g, '');
+      if (cleaned.startsWith('data:') || cleaned.startsWith('http')) return full;
+      const baseDir = cssPath.split('/').slice(0, -1).join('/') || '/';
+      const resolved = normalizePath(`${baseDir}/${cleaned}`);
+      const asset = assets[resolved];
+      if (!asset) return full;
+      return `url('${asset.content}')`;
+    });
+  };
+
   const handleIncomingFile = (file: File) => {
     const allowed = ['.tsx', '.ts', '.jsx', '.js'];
     const lowerName = file.name.toLowerCase();
@@ -44,6 +71,12 @@ function App() {
       return;
     }
 
+    setProjectFiles(null);
+    setProjectEntry(null);
+    setProjectCss('');
+    setProjectHasCss(false);
+    setProjectWarnings([]);
+    setRasterFallbackUsed(false);
     setFileName(file.name);
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -62,6 +95,199 @@ function App() {
     handleIncomingFile(file);
   };
 
+  const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    const loadedFiles: Record<string, ProjectFile> = {};
+    const assetMap: Record<string, ProjectFile> = {};
+    const textExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css', '.json']);
+    const assetExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico']);
+
+    const readFile = (file: File) =>
+      new Promise<ProjectFile>((resolve, reject) => {
+        const ext = `.${file.name.split('.').pop() || ''}`.toLowerCase();
+        const path = normalizePath(file.webkitRelativePath || file.name);
+        const isText = textExtensions.has(ext);
+        const isAsset = assetExtensions.has(ext);
+
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+        reader.onload = () => {
+          const content = reader.result as string;
+          const kind = isText ? 'text' : 'binary';
+          const entry: ProjectFile = {
+            path,
+            kind,
+            content: kind === 'text' ? content : content,
+            mime: file.type || undefined,
+          };
+          if (isAsset) {
+            assetMap[path] = entry;
+          }
+          resolve(entry);
+        };
+        if (isText) {
+          reader.readAsText(file);
+        } else {
+          reader.readAsDataURL(file);
+        }
+      });
+
+    try {
+      const readResults = await Promise.all(files.map(readFile));
+      readResults.forEach((entry) => {
+        loadedFiles[entry.path] = entry;
+      });
+    } catch (err: any) {
+      setStatus('error');
+      setErrorMsg(err.message || 'Failed to read project files.');
+      return;
+    }
+
+    const cssFiles = Object.values(loadedFiles).filter((file) => file.kind === 'text' && file.path.endsWith('.css'));
+    const cssText = cssFiles
+      .map((file) => rewriteCssUrls(file.content, file.path, assetMap))
+      .join('\n');
+
+    const entryCandidates = Object.keys(loadedFiles).filter((path) =>
+      /\.(tsx|jsx|ts|js)$/.test(path)
+    );
+
+    const preferredEntries = [
+      '/index.tsx',
+      '/index.jsx',
+      '/src/index.tsx',
+      '/src/index.jsx',
+      '/App.tsx',
+      '/src/App.tsx',
+      '/main.tsx',
+      '/src/main.tsx',
+      '/slides.tsx',
+      '/src/slides.tsx',
+    ];
+
+    const resolvedEntry = preferredEntries.find((candidate) => entryCandidates.includes(candidate))
+      || entryCandidates[0]
+      || null;
+
+    setProjectFiles(loadedFiles);
+    setProjectEntry(resolvedEntry);
+    setProjectCss(cssText);
+    setProjectHasCss(cssFiles.length > 0);
+    setProjectWarnings([]);
+    setRasterFallbackUsed(false);
+    setTsxContent('');
+    setFileName(resolvedEntry ? resolvedEntry.replace(/^\//, '') : 'Project');
+
+    if (!resolvedEntry) {
+      setStatus('error');
+      setErrorMsg('No .tsx/.jsx entry file found in the selected folder.');
+    } else {
+      setStatus('idle');
+      setLayout(null);
+      setTargetFormat(null);
+    }
+  };
+
+  const handleZipUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const textExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.css', '.json']);
+    const assetExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico']);
+
+    const arrayBufferToDataUrl = (buffer: ArrayBuffer, mime?: string) =>
+      new Promise<string>((resolve) => {
+        const blob = new Blob([buffer], { type: mime || 'application/octet-stream' });
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+
+    let zipFiles: Record<string, Uint8Array>;
+    try {
+      const buffer = await file.arrayBuffer();
+      zipFiles = unzipSync(new Uint8Array(buffer));
+    } catch (err: any) {
+      setStatus('error');
+      setErrorMsg(err?.message || 'Failed to read ZIP archive.');
+      return;
+    }
+
+    const loadedFiles: Record<string, ProjectFile> = {};
+    const assetMap: Record<string, ProjectFile> = {};
+
+    for (const [rawPath, data] of Object.entries(zipFiles)) {
+      if (rawPath.endsWith('/')) continue;
+      const ext = `.${rawPath.split('.').pop() || ''}`.toLowerCase();
+      const path = normalizePath(rawPath);
+      const isText = textExtensions.has(ext);
+      const isAsset = assetExtensions.has(ext);
+
+      if (isText) {
+        const content = strFromU8(data);
+        loadedFiles[path] = { path, kind: 'text', content };
+      } else {
+        const dataUrl = await arrayBufferToDataUrl(data.buffer);
+        const entry = { path, kind: 'binary', content: dataUrl } as ProjectFile;
+        loadedFiles[path] = entry;
+        if (isAsset) assetMap[path] = entry;
+      }
+    }
+
+    const cssFiles = Object.values(loadedFiles).filter((file) => file.kind === 'text' && file.path.endsWith('.css'));
+    const cssText = cssFiles
+      .map((file) => rewriteCssUrls(file.content, file.path, assetMap))
+      .join('\n');
+
+    const entryCandidates = Object.keys(loadedFiles).filter((path) =>
+      /\.(tsx|jsx|ts|js)$/.test(path)
+    );
+    const preferredEntries = [
+      '/index.tsx',
+      '/index.jsx',
+      '/src/index.tsx',
+      '/src/index.jsx',
+      '/App.tsx',
+      '/src/App.tsx',
+      '/main.tsx',
+      '/src/main.tsx',
+      '/slides.tsx',
+      '/src/slides.tsx',
+    ];
+    const resolvedEntry = preferredEntries.find((candidate) => entryCandidates.includes(candidate))
+      || entryCandidates[0]
+      || null;
+
+    setProjectFiles(loadedFiles);
+    setProjectEntry(resolvedEntry);
+    setProjectCss(cssText);
+    setProjectHasCss(cssFiles.length > 0);
+    setProjectWarnings([]);
+    setRasterFallbackUsed(false);
+    setTsxContent('');
+    setFileName(resolvedEntry ? resolvedEntry.replace(/^\//, '') : 'Project');
+
+    if (!resolvedEntry) {
+      setStatus('error');
+      setErrorMsg('No .tsx/.jsx entry file found in the ZIP archive.');
+    } else {
+      setStatus('idle');
+      setLayout(null);
+      setTargetFormat(null);
+    }
+  };
+
+  const projectContext: ProjectContext | null = projectFiles
+    ? {
+      files: projectFiles,
+      entryPath: projectEntry || undefined,
+      cssText: projectCss || undefined,
+      hasCss: projectHasCss,
+    }
+    : null;
+
   const handleDrop = (e: React.DragEvent<HTMLButtonElement>) => {
     e.preventDefault();
     setIsDragging(false);
@@ -71,10 +297,12 @@ function App() {
   };
 
   const processFile = async () => {
-    if (!tsxContent || !targetFormat) return;
+    if ((!tsxContent && !projectContext) || !targetFormat) return;
 
     setStatus('analyzing');
     setErrorMsg('');
+    setProjectWarnings([]);
+    setRasterFallbackUsed(false);
     setProgress({
       stage: 'transpiling',
       percent: 8,
@@ -87,17 +315,31 @@ function App() {
         percent: 32,
         message: 'Mounting the component in a hidden 1280x720 stage',
       });
+      let sourceContent = tsxContent;
+      let sourceName = fileName;
+      if (projectContext) {
+        const entry = projectEntry ? projectFiles?.[projectEntry] : null;
+        sourceContent = entry?.content || '';
+        sourceName = projectEntry || fileName || 'Project';
+        if (!sourceContent) {
+          throw new Error('Selected entry file is empty or missing.');
+        }
+      }
       const result = await parseTsxToLayout({
-        content: tsxContent,
+        content: sourceContent,
         format: targetFormat,
-        sourceName: fileName,
+        sourceName,
         forceSinglePage,
+        project: projectContext || undefined,
       });
       setProgress({
         stage: 'extracting',
         percent: 78,
         message: 'Extracting text, images, and geometry from the DOM',
       });
+      if (result.diagnostics?.warnings?.length) {
+        setProjectWarnings(result.diagnostics.warnings);
+      }
       setLayout(result);
       setStatus('preview');
       setProgress({
@@ -132,10 +374,19 @@ function App() {
     };
 
     try {
+      const needsFallback =
+        allowRasterFallback &&
+        layout.diagnostics &&
+        (layout.diagnostics.missingImports.length > 0 || (layout.diagnostics.usedClassName && !layout.diagnostics.hasCss));
+
+      if (needsFallback) {
+        setRasterFallbackUsed(true);
+      }
+
       if (targetFormat === 'PDF') {
-        await generatePDF(layout, { quality }, onProgress);
+        await generatePDF(layout, { quality, rasterize: Boolean(needsFallback) }, onProgress);
       } else {
-        await generatePPTX(layout, { quality }, onProgress);
+        await generatePPTX(layout, { quality, rasterize: Boolean(needsFallback) }, onProgress);
       }
       setProgress({
         stage: 'generating',
@@ -161,6 +412,12 @@ function App() {
     setForceSinglePage(false);
     setQuality('standard');
     setProgress(null);
+    setProjectFiles(null);
+    setProjectEntry(null);
+    setProjectCss('');
+    setProjectHasCss(false);
+    setProjectWarnings([]);
+    setRasterFallbackUsed(false);
   };
 
   return (
@@ -190,6 +447,22 @@ function App() {
             </div>
           </header>
           <input type="file" accept=".tsx,.ts,.jsx,.js" onChange={handleFileUpload} className="hidden" ref={fileInputRef} />
+          <input
+            type="file"
+            multiple
+            // @ts-expect-error webkitdirectory is a non-standard but supported folder picker attribute.
+            webkitdirectory="true"
+            onChange={handleFolderUpload}
+            className="hidden"
+            ref={folderInputRef}
+          />
+          <input
+            type="file"
+            accept=".zip"
+            onChange={handleZipUpload}
+            className="hidden"
+            ref={zipInputRef}
+          />
           <button
             className={`dropzone ${fileName ? 'dropzone-ready' : ''} ${isDragging ? 'dropzone-active' : ''}`}
             onClick={() => fileInputRef.current?.click()}
@@ -215,6 +488,40 @@ function App() {
               </>
             )}
           </button>
+          <button
+            className="ghost"
+            onClick={() => folderInputRef.current?.click()}
+            type="button"
+          >
+            Upload Folder (Project Mode)
+          </button>
+          <button
+            className="ghost"
+            onClick={() => zipInputRef.current?.click()}
+            type="button"
+          >
+            Upload Zip (Project Mode)
+          </button>
+          {projectFiles && (
+            <div className="select-row">
+              <div className="select-label">Entry file</div>
+              <select
+                value={projectEntry || ''}
+                onChange={(e) => {
+                  setProjectEntry(e.target.value);
+                  setFileName(e.target.value.replace(/^\//, ''));
+                }}
+              >
+                {Object.keys(projectFiles)
+                  .filter((path) => /\.(tsx|jsx|ts|js)$/.test(path))
+                  .map((path) => (
+                    <option key={path} value={path}>
+                      {path.replace(/^\//, '')}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
         </section>
 
         <section className="panel">
@@ -279,6 +586,17 @@ function App() {
             <div>
               <div className="toggle-title">Single slide mode</div>
               <div className="toggle-subtitle">Scale long content into one page instead of paginating.</div>
+            </div>
+          </label>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={allowRasterFallback}
+              onChange={(e) => setAllowRasterFallback(e.target.checked)}
+            />
+            <div>
+              <div className="toggle-title">Raster fallback (if needed)</div>
+              <div className="toggle-subtitle">If vector export is unreliable, use a pixel-perfect slide image.</div>
             </div>
           </label>
 
@@ -380,6 +698,20 @@ function App() {
         </div>
 
         <div className="preview-area">
+          {projectWarnings.length > 0 && (
+            <div className="notice warning">
+              <div className="notice-title">Preview warning</div>
+              {projectWarnings.map((warning) => (
+                <div key={warning} className="notice-copy">{warning}</div>
+              ))}
+            </div>
+          )}
+          {rasterFallbackUsed && (
+            <div className="notice warning">
+              <div className="notice-title">Raster fallback used</div>
+              <div className="notice-copy">Vector export could not guarantee fidelity. Generated a pixel-perfect image instead.</div>
+            </div>
+          )}
           {status === 'idle' && (
             <div className="empty">
               <div className="empty-icon">

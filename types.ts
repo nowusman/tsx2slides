@@ -19,6 +19,7 @@ export interface LayoutElement {
   radius?: number; // px border radius when available
   fontFamily?: string;
   lineHeight?: number;
+  isLine?: boolean;
   strokeWidthPx?: number;
   borderStyle?: 'solid' | 'dashed' | 'dotted' | 'double' | 'none';
   shadow?: {
@@ -45,6 +46,8 @@ export interface DocumentLayout {
   title: string;
   pages: PageLayout[];
   summary: string;
+  snapshot?: RenderSnapshot;
+  diagnostics?: LayoutDiagnostics;
 }
 
 export type ExportFormat = 'PDF' | 'PPTX';
@@ -98,6 +101,7 @@ export interface ExportOptions {
   includeImages?: boolean;
   embedFonts?: boolean;
   pageSize?: 'A4' | 'letter' | '16:9' | '4:3';
+  rasterize?: boolean;
 }
 
 /**
@@ -116,4 +120,34 @@ export interface ErrorInfo {
   message: string;
   suggestion: string;
   canRetry: boolean;
+}
+
+export interface ProjectFile {
+  path: string;
+  kind: 'text' | 'binary';
+  content: string;
+  mime?: string;
+}
+
+export interface ProjectContext {
+  files: Record<string, ProjectFile>;
+  entryPath?: string;
+  cssText?: string;
+  hasCss?: boolean;
+}
+
+export interface LayoutDiagnostics {
+  missingImports: string[];
+  usedClassName: boolean;
+  hasCss: boolean;
+  warnings: string[];
+}
+
+export interface RenderSnapshot {
+  html: string;
+  cssText: string;
+  width: number;
+  height: number;
+  contentHeight: number;
+  bgColor: string;
 }

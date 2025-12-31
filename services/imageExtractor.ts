@@ -205,6 +205,41 @@ export const extractImgElement = async (
 };
 
 /**
+ * Extracts a canvas element as an image
+ */
+export const extractCanvasElement = async (
+    canvas: HTMLCanvasElement,
+    context: ImageExtractionContext,
+    zIndex: number
+): Promise<ExtractedImage | null> => {
+    const styles = window.getComputedStyle(canvas);
+    if (styles.display === 'none' || styles.visibility === 'hidden') return null;
+
+    const opacity = parseFloat(styles.opacity);
+    if (opacity === 0) return null;
+
+    const position = calculatePrecisePosition(canvas, context.containerInfo);
+    if (position.width < 1 || position.height < 1) return null;
+
+    try {
+        const dataUrl = canvas.toDataURL('image/png');
+        return {
+            id: generateId(context),
+            type: 'image',
+            src: dataUrl,
+            position,
+            format: 'png',
+            zIndex,
+            naturalWidth: canvas.width || position.width,
+            naturalHeight: canvas.height || position.height,
+        };
+    } catch (err) {
+        console.warn('Failed to extract canvas:', err);
+        return null;
+    }
+};
+
+/**
  * Extracts background image from an element's CSS
  */
 export const extractBackgroundImage = async (

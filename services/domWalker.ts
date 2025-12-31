@@ -8,7 +8,7 @@
 import { buildStackingContextTree, getPaintOrder } from './stackingContext';
 import { getContainerInfo, calculatePrecisePosition, PreciseRect, ContainerInfo } from './positionCalculator';
 import { createTextExtractionContext, extractTextLines, TextElement } from './textExtractor';
-import { createImageExtractionContext, extractAllImages, extractSvgElement, ExtractedImage } from './imageExtractor';
+import { createImageExtractionContext, extractAllImages, extractSvgElement, extractCanvasElement, ExtractedImage } from './imageExtractor';
 import { handleGradient } from './gradientHandler';
 import { extractBorder, extractShadow, getEffectiveRadius, BorderInfo, ShadowInfo } from './visualEffects';
 import { rgbToHex } from './colorUtils';
@@ -193,6 +193,14 @@ export const walkDom = async (container: HTMLElement): Promise<EnhancedLayoutRes
             const svgImage = await extractSvgElement(element as unknown as SVGElement, imageContext, i);
             if (svgImage) {
                 elements.push(svgImage);
+            }
+        }
+
+        // Extract canvas as raster image
+        if (element.tagName.toLowerCase() === 'canvas') {
+            const canvasImage = await extractCanvasElement(element as HTMLCanvasElement, imageContext, i);
+            if (canvasImage) {
+                elements.push(canvasImage);
             }
         }
     }

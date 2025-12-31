@@ -9,7 +9,7 @@ import React from 'react';
 import * as ReactDOM from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import * as ts from 'typescript';
-import { DocumentLayout, ExportFormat, LayoutElement, PageLayout } from '../types';
+import { DocumentLayout, ExportFormat, LayoutElement, PageLayout, ProjectContext, LayoutDiagnostics, RenderSnapshot } from '../types';
 import { walkDom, validateElements, LayoutItem, ShapeElement } from './domWalker';
 import { TextElement } from './textExtractor';
 import { ExtractedImage } from './imageExtractor';
@@ -30,6 +30,7 @@ export interface ParseRequest {
   sourceName?: string | null;
   forceSinglePage?: boolean;
   maxPages?: number;
+  project?: ProjectContext;
 }
 
 const hashString = (value: string) => {
@@ -107,11 +108,67 @@ const settleLayout = async (container: HTMLElement) => {
 /**
  * Main entry point: parses TSX content and returns a document layout
  */
-export const parseTsxToLayout = async ({ content, format, sourceName, forceSinglePage, maxPages }: ParseRequest): Promise<DocumentLayout> => {
-  const container = document.getElementById('analysis-container');
-  if (!container) {
+export const parseTsxToLayout = async ({ content, format, sourceName, forceSinglePage, maxPages, project }: ParseRequest): Promise<DocumentLayout> => {
+  const host = document.getElementById('analysis-container');
+  if (!host) {
     throw new Error('Hidden analysis container missing from DOM.');
   }
+
+  const projectUsesClassName = project?.files
+    ? Object.values(project.files).some((file) => file.kind === 'text' && /\bclassName\s*=/.test(file.content))
+    : false;
+
+  const diagnostics: LayoutDiagnostics = {
+    missingImports: [],
+    usedClassName: /\bclassName\s*=/.test(content) || projectUsesClassName,
+    hasCss: Boolean(project?.hasCss),
+    warnings: [],
+  };
+
+  // Prepare shadow sandbox so project CSS does not leak into the app UI
+  Object.assign(host.style, {
+    position: 'absolute',
+    width: '0px',
+    height: '0px',
+    overflow: 'hidden',
+    top: '0',
+    left: '0',
+  });
+  const shadowRoot = host.shadowRoot ?? host.attachShadow({ mode: 'open' });
+  shadowRoot.innerHTML = '';
+
+  const styleTag = document.createElement('style');
+  styleTag.textContent = `
+    :host { all: initial; }
+    #analysis-stage {
+      position: absolute;
+      left: -9999px;
+      top: -9999px;
+      width: ${CONTAINER_WIDTH}px;
+      height: ${CONTAINER_HEIGHT}px;
+      overflow: auto;
+      visibility: visible;
+      pointer-events: none;
+      background: #ffffff;
+      color: #000000;
+      color-scheme: light;
+      font-family: Arial, sans-serif;
+    }
+    #analysis-stage *, #analysis-stage *::before, #analysis-stage *::after {
+      box-sizing: border-box;
+    }
+  `;
+  shadowRoot.appendChild(styleTag);
+
+  if (project?.cssText) {
+    const projectStyle = document.createElement('style');
+    projectStyle.textContent = project.cssText;
+    shadowRoot.appendChild(projectStyle);
+  }
+
+  const container = document.createElement('div');
+  container.id = 'analysis-stage';
+  shadowRoot.appendChild(container);
 
   // Normalize the hidden stage so measurements are consistent even if external CSS fails to load
   Object.assign(container.style, {
@@ -138,7 +195,7 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
 
   // Create module scope for execution
   const module: { exports: Record<string, any> } = { exports: {} };
-  const require = createRequire();
+  const require = createRequire(project, diagnostics, sourceName);
   const runnerKey = hashString(transpiled);
   if (runnerCache.size > MAX_RUNNER_CACHE) runnerCache.clear();
   const runner = runnerCache.get(runnerKey) ?? new Function('require', 'module', 'exports', 'React', 'ReactDOM', transpiled);
@@ -171,12 +228,27 @@ export const parseTsxToLayout = async ({ content, format, sourceName, forceSingl
 
   try {
     await settleLayout(container);
+    const pseudoCount = countPseudoElements(container);
+    if (pseudoCount > 0) {
+      diagnostics.warnings.push(`${pseudoCount} element(s) use ::before/::after which may not export as vectors.`);
+    }
     const layout = await extractLayoutEnhanced(
       container,
       format,
       sourceName || 'TSX Capture',
       { forceSinglePage, maxPages }
     );
+    layout.diagnostics = diagnostics;
+
+    if (diagnostics.usedClassName && !diagnostics.hasCss) {
+      diagnostics.warnings.push('Detected className usage, but no project CSS was provided.');
+    }
+    if (diagnostics.missingImports.length > 0) {
+      diagnostics.warnings.push(`Unresolved imports: ${diagnostics.missingImports.join(', ')}`);
+    }
+
+    const snapshot = buildSnapshot(container, project?.cssText, layout.pages[0]?.bgColor || '#ffffff');
+    layout.snapshot = snapshot;
     return layout;
   } finally {
     root.unmount();
@@ -240,6 +312,31 @@ const extractLayoutEnhanced = async (
   };
 };
 
+const countPseudoElements = (container: HTMLElement): number => {
+  const elements = Array.from(container.querySelectorAll('*'));
+  let count = 0;
+  elements.forEach((element) => {
+    const before = window.getComputedStyle(element, '::before');
+    const after = window.getComputedStyle(element, '::after');
+    if ((before && before.content && before.content !== 'none') || (after && after.content && after.content !== 'none')) {
+      count += 1;
+    }
+  });
+  return count;
+};
+
+const buildSnapshot = (container: HTMLElement, cssText: string | undefined, bgColor: string): RenderSnapshot => {
+  const html = container.innerHTML;
+  return {
+    html,
+    cssText: cssText || '',
+    width: CONTAINER_WIDTH,
+    height: CONTAINER_HEIGHT,
+    contentHeight: container.scrollHeight || CONTAINER_HEIGHT,
+    bgColor,
+  };
+};
+
 /**
  * Converts new LayoutItem to legacy LayoutElement format
  */
@@ -260,6 +357,7 @@ const convertToLegacyFormat = (item: LayoutItem): LayoutElement => {
       fontFamily: textItem.fontFamily,
       align: textItem.align,
       lineHeight: textItem.lineHeight,
+      isLine: textItem.isLine,
     };
   }
 
@@ -420,28 +518,140 @@ const buildFriendlyHint = (message: string, diagnostic: ts.Diagnostic) => {
 /**
  * Creates a require function for module resolution
  */
-const createRequire = () => {
+const createRequire = (project: ProjectContext | undefined, diagnostics: LayoutDiagnostics, entryName?: string | null) => {
   const cache: Record<string, any> = {};
-  return (moduleName: string) => {
+  const files = project?.files || {};
+  const entryPath = entryName ? normalizePath(entryName) : project?.entryPath;
+
+  const resolveModule = (moduleName: string, fromPath?: string): string | null => {
+    if (moduleName.startsWith('.') || moduleName.startsWith('/')) {
+      const baseDir = fromPath ? dirname(fromPath) : '';
+      const resolved = normalizePath(joinPath(baseDir, moduleName));
+      return resolveWithExtensions(resolved, files);
+    }
+
+    return null;
+  };
+
+  const loadModule = (filePath: string): any => {
+    if (cache[filePath]) return cache[filePath];
+    const file = files[filePath];
+    if (!file || file.kind !== 'text') return null;
+
+    const module = { exports: {} as Record<string, any> };
+    if (filePath.endsWith('.json')) {
+      try {
+        module.exports = JSON.parse(file.content);
+        cache[filePath] = module.exports;
+        return module.exports;
+      } catch (err) {
+        throw new Error(`Failed to parse JSON module ${filePath}: ${String(err)}`);
+      }
+    }
+    const transpiled = transpileTsx(file.content, filePath);
+    const runnerKey = hashString(`${filePath}:${transpiled}`);
+    const runner = runnerCache.get(runnerKey) ?? new Function('require', 'module', 'exports', 'React', 'ReactDOM', transpiled);
+    runnerCache.set(runnerKey, runner);
+    const localRequire = (mod: string) => requireWithContext(mod, filePath);
+    runner(localRequire, module, module.exports, React, ReactDOM);
+    cache[filePath] = module.exports;
+    return module.exports;
+  };
+
+  const requireWithContext = (moduleName: string, fromPath?: string) => {
     if (moduleName === 'react') return React;
     if (moduleName === 'react-dom' || moduleName === 'react-dom/client') return ReactDOM;
-    if (cache[moduleName]) return cache[moduleName];
+
+    const resolved = resolveModule(moduleName, fromPath || entryPath || undefined);
+    if (resolved) {
+      if (resolved.endsWith('.css')) return null;
+      if (isAssetFile(resolved, files)) {
+        return files[resolved].content;
+      }
+      const loaded = loadModule(resolved);
+      if (loaded) return loaded;
+    }
+
+    if (!diagnostics.missingImports.includes(moduleName)) {
+      diagnostics.missingImports.push(moduleName);
+    }
 
     const mock = createMockLibrary(moduleName);
     cache[moduleName] = mock;
     return mock;
   };
+
+  return (moduleName: string) => requireWithContext(moduleName, entryPath || undefined);
 };
 
 /**
  * Creates a mock library for unknown imports
  */
 const createMockLibrary = (_moduleName: string) => {
-  const MockComponent = ({ children }: { children?: React.ReactNode }) =>
-    React.createElement(React.Fragment, null, children);
+  const MockComponent = ({
+    children,
+    size,
+    width,
+    height,
+  }: {
+    children?: React.ReactNode;
+    size?: number;
+    width?: number;
+    height?: number;
+  }) =>
+    React.createElement('span', {
+      style: {
+        display: 'inline-block',
+        width: size || width || 24,
+        height: size || height || 24,
+      },
+      children,
+    });
   return new Proxy(MockComponent, {
     get: () => MockComponent,
   });
+};
+
+const normalizePath = (value: string) => {
+  const cleaned = value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/^\/+/, '');
+  return cleaned ? `/${cleaned}` : '/';
+};
+
+const joinPath = (base: string, next: string) => {
+  if (!base) return next;
+  if (next.startsWith('/')) return next;
+  return `${base.replace(/\/$/, '')}/${next}`;
+};
+
+const dirname = (filePath: string) => filePath.split('/').slice(0, -1).join('/');
+
+const resolveWithExtensions = (basePath: string, files: ProjectContext['files']) => {
+  const candidates = [
+    basePath,
+    `${basePath}.tsx`,
+    `${basePath}.ts`,
+    `${basePath}.jsx`,
+    `${basePath}.js`,
+    `${basePath}.css`,
+    `${basePath}.json`,
+    `${basePath}.svg`,
+    `${basePath}.png`,
+    `${basePath}.jpg`,
+    `${basePath}.jpeg`,
+    `${basePath}.gif`,
+    `${basePath}.webp`,
+  ];
+  for (const candidate of candidates) {
+    if (files[normalizePath(candidate)]) {
+      return normalizePath(candidate);
+    }
+  }
+  return null;
+};
+
+const isAssetFile = (filePath: string, files: ProjectContext['files']) => {
+  const file = files[filePath];
+  return file && file.kind === 'binary';
 };
 
 /**

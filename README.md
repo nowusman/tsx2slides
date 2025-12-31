@@ -168,11 +168,17 @@ npm run build
 1.  **Launch the Application**: Open your browser and navigate to the deployed URL (e.g., `http://localhost:5173`).
 2.  **Prepare Your Component**: Ensure your React component is in a `.tsx` file.
     *   *Tip*: Use standard CSS or inline styles for best results.
-3.  **Upload**: Drag and drop your `.tsx` file into the upload zone, or click to select.
+3.  **Upload**:
+    *   **Single File**: Drag and drop your `.tsx` file into the upload zone, or click to select.
+    *   **Project Mode**: Use "Upload Folder" or "Upload Zip" to load a project that contains your TSX, CSS, and assets. Choose the entry file if prompted.
 4.  **Preview & Verify**: The application will render your component. Check the preview to ensure everything looks correct.
 5.  **Export**:
     *   **PDF**: Click "Export PDF" for a high-quality A4 landscape document.
     *   **PPTX**: Click "Export PowerPoint" for an editable slide deck.
+
+### Raster Fallback (Optional)
+
+If the renderer detects missing imports or missing CSS, it will fall back to a pixel-perfect raster slide (PNG) to preserve layout fidelity. This will be clearly indicated in the UI so you know when the export is no longer editable text.
 
 ---
 
